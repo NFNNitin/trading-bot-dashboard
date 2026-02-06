@@ -1,104 +1,102 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 from datetime import datetime
 import time
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Pro Crypto Dashboard", layout="wide")
+st.set_page_config(page_title="AI Trading Predictor", layout="wide")
 
-# --- SIDEBAR SETTINGS ---
-st.sidebar.header("⚙️ Settings")
-# Default list matches your interest in BTC, XRP, Gold
-default_symbols = "BTC-USD, XRP-USD, GC=F, SI=F"
-user_symbols = st.sidebar.text_input("Watchlist (comma separated)", default_symbols)
-watchlist = [s.strip().upper() for s in user_symbols.split(",")]
-refresh_rate = st.sidebar.slider("Auto-Refresh (Seconds)", 30, 300, 60)
+# --- INDICATOR CALCULATIONS ---
+def get_indicators(df):
+    # EMAs
+    df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
+    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    
+    # RSI (14 Period)
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    return df
 
-# --- MAIN HEADER ---
-st.title("📈 Live Market Intelligence")
-st.caption(f"Last Global Sync: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+def find_levels(df):
+    # Simple logic to find horizontal Support and Resistance from past peaks/troughs
+    levels = []
+    for i in range(2, len(df)-2):
+        if df['Low'][i] < df['Low'][i-1] and df['Low'][i] < df['Low'][i+1] and df['Low'][i] < df['Low'][i-2] and df['Low'][i] < df['Low'][i+2]:
+            levels.append(('Support', df['Low'][i]))
+        if df['High'][i] > df['High'][i-1] and df['High'][i] > df['High'][i+1] and df['High'][i] > df['High'][i-2] and df['High'][i] > df['High'][i+2]:
+            levels.append(('Resistance', df['High'][i]))
+    return levels
 
-# --- ANALYSIS ENGINE ---
-def get_market_data(symbol):
-    try:
-        # 1. Download 1 month of data to ensure EMA 200 is accurate
-        # We use '1mo' period and '30m' interval as requested
-        df = yf.download(symbol, period="1mo", interval="30m", progress=False)
+# --- DASHBOARD UI ---
+st.title("🤖 AI Market Confluence Predictor")
+symbol = st.sidebar.selectbox("Select Asset", ["BTC-USD", "XRP-USD", "ETH-USD", "GC=F", "SI=F"])
+
+# Fetch Data (30m for primary analysis)
+df = yf.download(symbol, period="1mo", interval="30m", progress=False)
+if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+df = get_indicators(df)
+levels = find_levels(df)
+
+# --- PREDICTION LOGIC ---
+curr = df.iloc[-1]
+score = 0
+reasons = []
+
+# 1. EMA Trend (2 Points)
+if curr['Close'] > curr['EMA100'] and curr['Close'] > curr['EMA200']:
+    score += 2
+    reasons.append("Price is in a Bullish Trend (Above EMAs)")
+elif curr['Close'] < curr['EMA100'] and curr['Close'] < curr['EMA200']:
+    score -= 2
+    reasons.append("Price is in a Bearish Trend (Below EMAs)")
+
+# 2. RSI Momentum (1 Point)
+if curr['RSI'] < 35:
+    score += 1
+    reasons.append("RSI is Oversold (Potential Bounce)")
+elif curr['RSI'] > 65:
+    score -= 1
+    reasons.append("RSI is Overbought (Potential Pullback)")
+
+# 3. Support/Resistance Proximity (1 Point)
+last_support = [l[1] for l in levels if l[0] == 'Support'][-1] if any(l[0] == 'Support' for l in levels) else 0
+if abs(curr['Close'] - last_support) / curr['Close'] < 0.01:
+    score += 1
+    reasons.append("Price is near a major Support level")
+
+# Display Prediction
+st.divider()
+c1, c2 = st.columns([1, 2])
+with c1:
+    if score >= 2:
+        st.success(f"### PREDICTION: BUY\nConfidence: {abs(score)}/4")
+    elif score <= -2:
+        st.error(f"### PREDICTION: SELL\nConfidence: {abs(score)}/4")
+    else:
+        st.warning(f"### PREDICTION: NEUTRAL\nConfidence: Low")
+    
+    for r in reasons:
+        st.write(f"- {r}")
+
+# --- CANDLESTICK CHART ---
+with c2:
+    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Candles")])
+    fig.add_trace(go.Scatter(x=df.index, y=df['EMA100'], name="EMA 100", line=dict(color='orange')))
+    fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], name="EMA 200", line=dict(color='blue')))
+    
+    # Plot Support Levels
+    for level in levels[-5:]: # Show last 5 major levels
+        color = "green" if level[0] == "Support" else "red"
+        fig.add_hline(y=level[1], line_dash="dash", line_color=color, annotation_text=level[0])
         
-        # 2. Data Cleaning (Fix for yfinance Multi-Index issue)
-        if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        # Ensure we have enough data points (need 200 for EMA200)
-        if len(df) < 200: return None
+    fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_dark")
+    st.plotly_chart(fig, use_container_width=True)
 
-        # 3. Calculate Indicators
-        df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
-        df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
-        
-        # 4. Determine Status
-        curr = df.iloc[-1]
-        price = curr['Close']
-        ema100 = curr['EMA100']
-        ema200 = curr['EMA200']
-        
-        # Trend Logic: Bullish if above BOTH EMAs
-        if price > ema100 and price > ema200:
-            trend = "🟢 BULLISH"
-            signal = "Look for Longs"
-        elif price < ema100 and price < ema200:
-            trend = "🔴 BEARISH"
-            signal = "Look for Shorts"
-        else:
-            trend = "🟡 CHOPPY / NEUTRAL"
-            signal = "Wait"
-            
-        return {
-            "price": price,
-            "trend": trend,
-            "signal": signal,
-            "ema100": ema100,
-            "ema200": ema200
-        }
-    except Exception as e:
-        return None
-
-# --- DASHBOARD LAYOUT ---
-# Create a grid of columns
-cols = st.columns(len(watchlist))
-
-for i, symbol in enumerate(watchlist):
-    with cols[i]:
-        st.subheader(symbol)
-        with st.spinner("Scanning..."):
-            data = get_market_data(symbol)
-        
-        if data:
-            # Display Metric
-            st.metric(label="Price (30m)", value=f"${data['price']:,.2f}")
-            
-            # Display Trend & Signal
-            st.markdown(f"**Trend:** {data['trend']}")
-            st.info(f"**Action:** {data['signal']}")
-            
-            # Technical Details (Collapsible)
-            with st.expander("Technical Levels"):
-                st.write(f"EMA 100: ${data['ema100']:,.2f}")
-                st.write(f"EMA 200: ${data['ema200']:,.2f}")
-                if data['trend'] == "🟢 BULLISH":
-                    st.success("Price is above Long-Term Trend")
-                elif data['trend'] == "🔴 BEARISH":
-                    st.error("Price is below Long-Term Trend")
-        else:
-            st.warning("Loading data...")
-
-# --- AUTO-REFRESH LOOP ---
-# This button allows manual refresh
-if st.button("🔄 Refresh Now"):
-    st.rerun()
-
-# This keeps the app updating automatically
-time.sleep(refresh_rate)
+# Update Frequency
+time.sleep(60)
 st.rerun()
