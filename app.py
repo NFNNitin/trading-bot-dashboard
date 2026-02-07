@@ -6,97 +6,110 @@ import plotly.graph_objects as go
 from datetime import datetime
 import time
 
-st.set_page_config(page_title="AI Trading Predictor", layout="wide")
+st.set_page_config(page_title="Universal AI Predictor", layout="wide")
 
 # --- INDICATOR CALCULATIONS ---
-def get_indicators(df):
-    # EMAs
+def calculate_all_metrics(df):
+    if len(df) < 50: return df
+    # 1. EMAs for Trend
     df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    # RSI (14 Period)
+    # 2. RSI for Momentum
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
+    rs = gain / (loss + 1e-9)
     df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # 3. Bollinger Bands for Volatility
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['Std'] = df['Close'].rolling(window=20).std()
+    df['Upper'] = df['MA20'] + (df['Std'] * 2)
+    df['Lower'] = df['MA20'] - (df['Std'] * 2)
     return df
 
-def find_levels(df):
-    # Simple logic to find horizontal Support and Resistance from past peaks/troughs
-    levels = []
-    for i in range(2, len(df)-2):
-        if df['Low'][i] < df['Low'][i-1] and df['Low'][i] < df['Low'][i+1] and df['Low'][i] < df['Low'][i-2] and df['Low'][i] < df['Low'][i+2]:
-            levels.append(('Support', df['Low'][i]))
-        if df['High'][i] > df['High'][i-1] and df['High'][i] > df['High'][i+1] and df['High'][i] > df['High'][i-2] and df['High'][i] > df['High'][i+2]:
-            levels.append(('Resistance', df['High'][i]))
-    return levels
+def get_candle_pattern(df):
+    if len(df) < 2: return "Neutral"
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    body = abs(last['Open'] - last['Close'])
+    # Hammer Detection
+    lower_wick = min(last['Open'], last['Close']) - last['Low']
+    if lower_wick > (body * 2) and (last['High'] - max(last['Open'], last['Close'])) < (body * 0.5):
+        return "🔨 Hammer (Bullish Reversal)"
+    # Engulfing Detection
+    if last['Close'] > prev['Open'] and last['Open'] < prev['Close'] and prev['Close'] < prev['Open']:
+        return "🟢 Bullish Engulfing"
+    return "No Pattern"
 
-# --- DASHBOARD UI ---
-st.title("🤖 AI Market Confluence Predictor")
-symbol = st.sidebar.selectbox("Select Asset", ["BTC-USD", "XRP-USD", "ETH-USD", "GC=F", "SI=F"])
+# --- SIDEBAR: ADD ANY ASSET ---
+st.sidebar.header("🔍 Market Scanner")
+# Changed from selectbox to text_input so you can add ANY symbol
+user_input = st.sidebar.text_input("Enter Asset Symbol (e.g. BTC-USD, AAPL, EURUSD=X)", "BTC-USD")
+asset = user_input.strip().upper()
+refresh_time = st.sidebar.slider("Refresh Interval (sec)", 30, 300, 60)
 
-# Fetch Data (30m for primary analysis)
-df = yf.download(symbol, period="1mo", interval="30m", progress=False)
-if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-df = get_indicators(df)
-levels = find_levels(df)
+# --- MAIN DASHBOARD ---
+st.title(f"🤖 AI Confluence Analysis: {asset}")
 
-# --- PREDICTION LOGIC ---
-curr = df.iloc[-1]
-score = 0
-reasons = []
-
-# 1. EMA Trend (2 Points)
-if curr['Close'] > curr['EMA100'] and curr['Close'] > curr['EMA200']:
-    score += 2
-    reasons.append("Price is in a Bullish Trend (Above EMAs)")
-elif curr['Close'] < curr['EMA100'] and curr['Close'] < curr['EMA200']:
-    score -= 2
-    reasons.append("Price is in a Bearish Trend (Below EMAs)")
-
-# 2. RSI Momentum (1 Point)
-if curr['RSI'] < 35:
-    score += 1
-    reasons.append("RSI is Oversold (Potential Bounce)")
-elif curr['RSI'] > 65:
-    score -= 1
-    reasons.append("RSI is Overbought (Potential Pullback)")
-
-# 3. Support/Resistance Proximity (1 Point)
-last_support = [l[1] for l in levels if l[0] == 'Support'][-1] if any(l[0] == 'Support' for l in levels) else 0
-if abs(curr['Close'] - last_support) / curr['Close'] < 0.01:
-    score += 1
-    reasons.append("Price is near a major Support level")
-
-# Display Prediction
-st.divider()
-c1, c2 = st.columns([1, 2])
-with c1:
-    if score >= 2:
-        st.success(f"### PREDICTION: BUY\nConfidence: {abs(score)}/4")
-    elif score <= -2:
-        st.error(f"### PREDICTION: SELL\nConfidence: {abs(score)}/4")
-    else:
-        st.warning(f"### PREDICTION: NEUTRAL\nConfidence: Low")
+try:
+    # Fetch data across multiple timeframes for the prediction
+    tfs = ["5m", "30m", "1h", "4h"]
+    scores = []
     
-    for r in reasons:
-        st.write(f"- {r}")
-
-# --- CANDLESTICK CHART ---
-with c2:
-    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Candles")])
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA100'], name="EMA 100", line=dict(color='orange')))
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], name="EMA 200", line=dict(color='blue')))
+    st.subheader("Multi-Timeframe Signal Scan")
+    cols = st.columns(len(tfs))
     
-    # Plot Support Levels
-    for level in levels[-5:]: # Show last 5 major levels
-        color = "green" if level[0] == "Support" else "red"
-        fig.add_hline(y=level[1], line_dash="dash", line_color=color, annotation_text=level[0])
+    for i, tf in enumerate(tfs):
+        # We need 1mo of data to ensure EMA 200 is accurate
+        df_tf = yf.download(asset, period="1mo", interval=tf, progress=False)
+        if isinstance(df_tf.columns, pd.MultiIndex): df_tf.columns = df_tf.columns.get_level_values(0)
         
-    fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_dark")
+        if not df_tf.empty and len(df_tf) > 100:
+            df_tf = calculate_all_metrics(df_tf)
+            pattern = get_candle_pattern(df_tf)
+            curr = df_tf.iloc[-1]
+            
+            # Prediction Scoring Logic
+            score = 0
+            if curr['Close'] > curr['EMA200']: score += 1 # Trend
+            if curr['RSI'] < 40: score += 1 # Momentum
+            if "Bullish" in pattern or "Hammer" in pattern: score += 1 # Candle
+            scores.append(score)
+            
+            with cols[i]:
+                st.metric(f"{tf} Score", f"{score}/3")
+                st.write(f"**Pattern:** {pattern}")
+                st.caption(f"RSI: {curr['RSI']:.1f}")
+        else:
+            cols[i].warning(f"No {tf} Data")
+
+    # Final Prediction
+    st.divider()
+    avg_score = sum(scores) / len(scores) if scores else 0
+    if avg_score >= 2:
+        st.success(f"### 🚀 FINAL PREDICTION: STRONG BUY SIGNAL\nHigh Confluence across multiple timeframes.")
+    elif avg_score <= 0.5:
+        st.error(f"### 📉 FINAL PREDICTION: SELL/WEAK\nStrong Bearish pressure or overextension.")
+    else:
+        st.warning(f"### ⚖️ FINAL PREDICTION: NEUTRAL\nMixed signals. Wait for clearer patterns.")
+
+    # Main Candlestick Chart
+    st.subheader(f"Interactive Analysis Chart (30m)")
+    main_df = yf.download(asset, period="1mo", interval="30m", progress=False)
+    if isinstance(main_df.columns, pd.MultiIndex): main_df.columns = main_df.columns.get_level_values(0)
+    main_df = calculate_all_metrics(main_df)
+
+    fig = go.Figure(data=[go.Candlestick(x=main_df.index, open=main_df['Open'], high=main_df['High'], low=main_df['Low'], close=main_df['Close'], name="Candles")])
+    fig.add_trace(go.Scatter(x=main_df.index, y=main_df['EMA100'], name="EMA 100", line=dict(color='orange', width=1)))
+    fig.add_trace(go.Scatter(x=main_df.index, y=main_df['EMA200'], name="EMA 200", line=dict(color='blue', width=1.5)))
+    fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
     st.plotly_chart(fig, use_container_width=True)
 
-# Update Frequency
-time.sleep(60)
+except Exception as e:
+    st.error(f"Could not load asset '{asset}'. Please ensure the ticker is correct.")
+
+# Auto-refresh logic
+time.sleep(refresh_time)
 st.rerun()
