@@ -60,6 +60,20 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
     }
+    .conflict-critical {
+        background-color: #ff4b4b;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #darkred;
+        margin: 10px 0;
+    }
+    .conflict-warning {
+        background-color: #fca311;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #ff8800;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -619,7 +633,164 @@ def predict_price_movement(df, timeframe):
         'rsi': rsi
     }
 
-# --- 6. BACKTESTING ENGINE ---
+# --- 6. DIVERGENCE & CONFLICT DETECTION ---
+def detect_signal_conflicts(data_sets, analysis_results):
+    """
+    Detects when indicators say one thing but price action says another.
+    This is THE KEY to avoiding false signals!
+    """
+    conflicts = []
+    warnings = []
+    
+    # Get recent price action
+    df_5m = data_sets['5m']
+    df_1h = data_sets['1h']
+    
+    current_price = df_5m['Close'].iloc[-1]
+    price_5min_ago = df_5m['Close'].iloc[-2] if len(df_5m) > 1 else current_price
+    price_30min_ago = df_5m['Close'].iloc[-7] if len(df_5m) > 7 else current_price
+    price_1h_ago = df_1h['Close'].iloc[-2] if len(df_1h) > 1 else current_price
+    
+    # Calculate REAL-TIME price momentum
+    momentum_5m = ((current_price - price_5min_ago) / price_5min_ago) * 100
+    momentum_30m = ((current_price - price_30min_ago) / price_30min_ago) * 100
+    momentum_1h = ((current_price - price_1h_ago) / price_1h_ago) * 100
+    
+    # Check for divergences
+    sig_5m = analysis_results.get('5m')
+    sig_30m = analysis_results.get('30m')
+    sig_1h = analysis_results.get('1h')
+    
+    # CONFLICT 1: Signal says BUY but price is actively falling
+    if sig_5m and "BUY" in sig_5m['Signal']:
+        if momentum_5m < -0.3:  # Price dropped >0.3% in last 5 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'HIGH',
+                'message': f"⚠️ STRONG BUY signal BUT price dropped {momentum_5m:.2f}% in last 5min",
+                'action': "WAIT for price stabilization before entering",
+                'technical': "Indicators are lagging - price rejecting recent high"
+            })
+        
+        if momentum_30m < -1.0:  # Price dropped >1% in last 30 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'CRITICAL',
+                'message': f"🚨 BUY signal BUT price falling {momentum_30m:.2f}% (30min)",
+                'action': "DO NOT ENTER - Possible liquidity grab or false breakout",
+                'technical': "Sharp recent decline contradicts bullish indicators"
+            })
+    
+    # CONFLICT 2: Signal says SELL but price is actively rising
+    if sig_5m and "SELL" in sig_5m['Signal']:
+        if momentum_5m > 0.3:  # Price rose >0.3% in last 5 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'HIGH',
+                'message': f"⚠️ SELL signal BUT price rose {momentum_5m:.2f}% in last 5min",
+                'action': "WAIT for price stabilization before shorting",
+                'technical': "Indicators lagging - price momentum still bullish"
+            })
+    
+    # CONFLICT 3: Timeframe disagreement (5m vs 1h)
+    if sig_5m and sig_1h:
+        if "BUY" in sig_5m['Signal'] and "SELL" in sig_1h['Signal']:
+            conflicts.append({
+                'type': 'TIMEFRAME_CONFLICT',
+                'severity': 'MEDIUM',
+                'message': "⚠️ 5m says BUY but 1h says SELL",
+                'action': "High risk - only scalp if you're experienced",
+                'technical': "Counter-trend trade against higher timeframe"
+            })
+        
+        if "SELL" in sig_5m['Signal'] and "BUY" in sig_1h['Signal']:
+            conflicts.append({
+                'type': 'TIMEFRAME_CONFLICT',
+                'severity': 'MEDIUM',
+                'message': "⚠️ 5m says SELL but 1h says BUY",
+                'action': "Likely a pullback in uptrend - not a reversal",
+                'technical': "Short-term bearish in larger bullish trend"
+            })
+    
+    # WARNING 1: Overbought on BUY signal
+    if sig_5m and "BUY" in sig_5m['Signal'] and sig_5m['RSI'] > 70:
+        warnings.append({
+            'type': 'OVERBOUGHT',
+            'severity': 'MEDIUM',
+            'message': f"⚠️ BUY signal but RSI overbought ({sig_5m['RSI']:.1f})",
+            'action': "Expect pullback soon - use tight stop-loss",
+            'technical': "Momentum exhaustion likely - late entry risk"
+        })
+    
+    # WARNING 2: Oversold on SELL signal
+    if sig_5m and "SELL" in sig_5m['Signal'] and sig_5m['RSI'] < 30:
+        warnings.append({
+            'type': 'OVERSOLD',
+            'severity': 'MEDIUM',
+            'message': f"⚠️ SELL signal but RSI oversold ({sig_5m['RSI']:.1f})",
+            'action': "Bounce likely - avoid shorting here",
+            'technical': "Oversold conditions favor reversal over continuation"
+        })
+    
+    # WARNING 3: Low ADX (weak trend)
+    if sig_5m and sig_5m.get('ADX', 0) < 20:
+        if "STRONG BUY" in sig_5m['Signal'] or "STRONG SELL" in sig_5m['Signal']:
+            warnings.append({
+                'type': 'WEAK_TREND',
+                'severity': 'MEDIUM',
+                'message': f"⚠️ STRONG signal but ADX weak ({sig_5m['ADX']:.1f})",
+                'action': "Choppy market - reduce position size by 50%",
+                'technical': "Low ADX = no clear trend = higher failure rate"
+            })
+    
+    # WARNING 4: Volume divergence
+    df_recent = df_5m.tail(10)
+    avg_volume = df_recent['Volume'].mean()
+    current_volume = df_5m['Volume'].iloc[-1]
+    
+    if current_volume < avg_volume * 0.5:  # Volume 50% below average
+        if sig_5m and ("BUY" in sig_5m['Signal'] or "SELL" in sig_5m['Signal']):
+            warnings.append({
+                'type': 'LOW_VOLUME',
+                'severity': 'LOW',
+                'message': "⚠️ Signal on low volume (50% below average)",
+                'action': "Weak conviction - wait for volume confirmation",
+                'technical': "Low volume moves often reverse - lack of participation"
+            })
+    
+    # Calculate overall risk score
+    risk_score = 0
+    risk_score += len([c for c in conflicts if c['severity'] == 'CRITICAL']) * 30
+    risk_score += len([c for c in conflicts if c['severity'] == 'HIGH']) * 20
+    risk_score += len([c for c in conflicts if c['severity'] == 'MEDIUM']) * 10
+    risk_score += len([w for w in warnings if w['severity'] == 'MEDIUM']) * 5
+    
+    # Overall assessment
+    if risk_score >= 30:
+        assessment = "🚫 HIGH RISK - Do not trade"
+        color = "red"
+    elif risk_score >= 15:
+        assessment = "⚠️ MEDIUM RISK - Reduce position size"
+        color = "orange"
+    elif risk_score > 0:
+        assessment = "💛 LOW RISK - Tradeable with caution"
+        color = "yellow"
+    else:
+        assessment = "✅ LOW RISK - Signal aligned"
+        color = "green"
+    
+    return {
+        'conflicts': conflicts,
+        'warnings': warnings,
+        'risk_score': risk_score,
+        'assessment': assessment,
+        'color': color,
+        'momentum_5m': momentum_5m,
+        'momentum_30m': momentum_30m,
+        'momentum_1h': momentum_1h
+    }
+
+# --- 7. BACKTESTING ENGINE ---
 def run_backtest(df, timeframe_name, periods_ahead=1):
     """
     Runs backtest on historical data to validate prediction accuracy
@@ -1096,6 +1267,77 @@ def render_timeframe_scanner(data_sets, risk_reward, position_size):
     
     st.divider()
     
+    # --- DIVERGENCE & CONFLICT DETECTION ---
+    st.subheader("🚨 Signal Quality Check")
+    
+    conflict_analysis = detect_signal_conflicts(data_sets, analysis_results)
+    
+    # Display overall assessment
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        if conflict_analysis['color'] == 'red':
+            st.error(f"**{conflict_analysis['assessment']}**")
+        elif conflict_analysis['color'] == 'orange':
+            st.warning(f"**{conflict_analysis['assessment']}**")
+        elif conflict_analysis['color'] == 'yellow':
+            st.info(f"**{conflict_analysis['assessment']}**")
+        else:
+            st.success(f"**{conflict_analysis['assessment']}**")
+    
+    with col2:
+        st.metric("Risk Score", conflict_analysis['risk_score'], 
+                 "Lower is better", delta_color="inverse")
+    
+    with col3:
+        st.metric("Live Momentum", f"{conflict_analysis['momentum_5m']:+.2f}%",
+                 "Last 5 minutes")
+    
+    # Display conflicts (CRITICAL issues)
+    if conflict_analysis['conflicts']:
+        st.markdown("### 🚨 Critical Conflicts Detected")
+        for conflict in conflict_analysis['conflicts']:
+            severity_icon = "🚨" if conflict['severity'] == 'CRITICAL' else "⚠️"
+            
+            with st.expander(f"{severity_icon} {conflict['message']}", expanded=True):
+                st.markdown(f"**What's happening:** {conflict['technical']}")
+                st.markdown(f"**Recommended action:** {conflict['action']}")
+                
+                if conflict['severity'] == 'CRITICAL':
+                    st.error("❌ This is a high-risk situation. Consider waiting.")
+    
+    # Display warnings (Important but not critical)
+    if conflict_analysis['warnings']:
+        st.markdown("### ⚠️ Important Warnings")
+        warn_cols = st.columns(2)
+        for idx, warning in enumerate(conflict_analysis['warnings']):
+            with warn_cols[idx % 2]:
+                st.warning(f"**{warning['message']}**")
+                st.caption(f"💡 {warning['action']}")
+    
+    # Show real-time momentum
+    with st.expander("📊 Real-Time Price Momentum Analysis"):
+        mom_col1, mom_col2, mom_col3 = st.columns(3)
+        
+        with mom_col1:
+            color = "green" if conflict_analysis['momentum_5m'] > 0 else "red"
+            st.markdown(f"**5-Min:** <span style='color:{color}'>{conflict_analysis['momentum_5m']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        with mom_col2:
+            color = "green" if conflict_analysis['momentum_30m'] > 0 else "red"
+            st.markdown(f"**30-Min:** <span style='color:{color}'>{conflict_analysis['momentum_30m']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        with mom_col3:
+            color = "green" if conflict_analysis['momentum_1h'] > 0 else "red"
+            st.markdown(f"**1-Hour:** <span style='color:{color}'>{conflict_analysis['momentum_1h']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        st.caption("💡 Real-time momentum helps identify if indicators are lagging behind actual price movement")
+    
+    st.divider()
+    
     # --- AI TRADING STRATEGIES ---
     st.subheader("🎯 AI Trade Setups")
     
@@ -1361,10 +1603,11 @@ for idx, (name, ticker) in enumerate(quick_assets.items()):
         if st.button(name, use_container_width=True, key=f"quick_{ticker}"):
             if view_mode == "Single Asset":
                 st.session_state.current_symbol = ticker
+                st.rerun()
             else:
                 # In multi-asset mode, set to symbol_1
                 st.session_state.symbol_1 = ticker
-            st.rerun()
+                st.rerun()
 
 st.sidebar.divider()
 
