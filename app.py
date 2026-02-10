@@ -166,3 +166,125 @@ st.sidebar.subheader("Live Watchlist")
 watchlist = ["GC=F", "SI=F", "BTC-USD", "CL=F", "DX-Y", "EURUSD=X"]
 
 for w_sym in watchlist:
+    try:
+        w_df = yf.download(w_sym, period="2d", interval="1h", progress=False)
+        if isinstance(w_df.columns, pd.MultiIndex): w_df.columns = w_df.columns.get_level_values(0)
+        
+        if not w_df.empty:
+            w_curr = w_df.iloc[-1]
+            w_ema = w_df['Close'].ewm(span=200, adjust=False).mean().iloc[-1]
+            w_trend = "BULLISH" if w_curr['Close'] > w_ema else "BEARISH"
+            css_class = "buy-signal" if w_curr['Close'] > w_ema else "sell-signal"
+            
+            st.sidebar.markdown(f"""
+            <div class="watchlist-card {css_class}">
+                <div style="font-size: 16px;">{w_sym}</div>
+                <div class="small-text">{w_trend} | ${w_curr['Close']:,.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    except:
+        pass
+
+# --- MAIN PAGE ---
+st.title(f"🚀 Pro AI Trader: {symbol_input}")
+data = get_data(symbol_input)
+
+if data:
+    curr_price = data['5m'].iloc[-1]['Close']
+    pivot, r1, s1 = get_pivots(data['Daily'])
+    
+    # 1. METRICS
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Live Price", f"${curr_price:,.2f}")
+    m2.metric("Daily Pivot", f"${pivot:,.2f}")
+    m3.metric("Resistance (R1)", f"${r1:,.2f}")
+    m4.metric("Support (S1)", f"${s1:,.2f}")
+
+    # 2. ANALYSIS GRID
+    st.subheader("1. Multi-Timeframe Scan")
+    cols = st.columns(5)
+    
+    signals = {}
+    timeframes = ['5m', '15m', '30m', '1h', '4h']
+    
+    for i, tf in enumerate(timeframes):
+        df = add_indicators(data[tf])
+        sig = generate_signal(df, tf)
+        signals[tf] = sig
+        
+        color = "green" if sig['Signal'] == "BUY" else "red" if sig['Signal'] == "SELL" else "gray"
+        
+        with cols[i]:
+            st.markdown(f"**{tf}**")
+            st.markdown(f"<span style='color:{color}; font-weight:bold; font-size:18px'>{sig['Signal']}</span>", unsafe_allow_html=True)
+            st.caption(f"Trend: {sig['Trend']}")
+            st.caption(f"ADX: {sig['ADX']:.1f} ({'Strong' if sig['ADX']>20 else 'Weak'})")
+
+    st.divider()
+
+    # 3. CONFLUENCE STRATEGIES
+    st.subheader("2. High-Probability Setups")
+    s_col, i_col, sw_col = st.columns(3)
+    
+    # --- SCALPING (Strict Trend Filter) ---
+    with s_col:
+        st.markdown("### ⚡ Scalp (5m)")
+        s_data = signals['5m']
+        trend_1h = signals['1h']['Trend']
+        
+        # LOGIC: Scalp Signal MUST match 1H Trend
+        if s_data['Signal'] == "BUY" and trend_1h == "BULL":
+            st.success("✅ LONG SCALP")
+            st.write(f"Entry: ${curr_price:,.2f}")
+            st.write(f"TP: ${curr_price + (s_data['ATR']*1.5):,.2f}")
+            st.write(f"SL: ${curr_price - (s_data['ATR']*1.0):,.2f}")
+        elif s_data['Signal'] == "SELL" and trend_1h == "BEAR":
+            st.error("✅ SHORT SCALP")
+            st.write(f"Entry: ${curr_price:,.2f}")
+            st.write(f"TP: ${curr_price - (s_data['ATR']*1.5):,.2f}")
+            st.write(f"SL: ${curr_price + (s_data['ATR']*1.0):,.2f}")
+        else:
+            st.info("⏳ WAIT")
+            if s_data['Signal'] != "NEUTRAL":
+                st.caption(f"Ignored {s_data['Signal']} (Against 1H Trend)")
+
+    # --- INTRADAY (Pivot Logic) ---
+    with i_col:
+        st.markdown("### 📅 Intraday (1H)")
+        i_data = signals['1h']
+        
+        if i_data['Signal'] == "BUY" and curr_price > pivot:
+            st.success("✅ DAY LONG")
+            st.write(f"Target: ${r1:,.2f}")
+            st.write(f"Stop: ${pivot:,.2f}")
+        elif i_data['Signal'] == "SELL" and curr_price < pivot:
+            st.error("✅ DAY SHORT")
+            st.write(f"Target: ${s1:,.2f}")
+            st.write(f"Stop: ${pivot:,.2f}")
+        else:
+            st.warning("⚖️ RANGING / WAIT")
+            st.caption(f"ADX: {i_data['ADX']:.1f}")
+
+    # --- SWING (4H Logic) ---
+    with sw_col:
+        st.markdown("### 🌊 Swing (4H)")
+        w_data = signals['4h']
+        if w_data['Signal'] == "BUY":
+            st.success("✅ SWING LONG")
+            st.write(f"Trail SL: ${curr_price - (w_data['ATR']*3):,.2f}")
+        elif w_data['Signal'] == "SELL":
+            st.error("✅ SWING SHORT")
+            st.write(f"Trail SL: ${curr_price + (w_data['ATR']*3):,.2f}")
+        else:
+            st.info("💤 NO SETUP")
+
+    # 4. CHART
+    st.subheader("Price Action (1H)")
+    fig = go.Figure(data=[go.Candlestick(x=data['1h'].index, open=data['1h']['Open'], high=data['1h']['High'], low=data['1h']['Low'], close=data['1h']['Close'])])
+    fig.add_trace(go.Scatter(x=data['1h'].index, y=data['1h']['EMA50'], line=dict(color='orange'), name="EMA 50"))
+    fig.add_trace(go.Scatter(x=data['1h'].index, y=data['1h']['EMA200'], line=dict(color='blue'), name="EMA 200"))
+    fig.update_layout(height=500, template="plotly_dark", xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+else:
+    st.error("Symbol not found. Try GC=F, BTC-USD")
