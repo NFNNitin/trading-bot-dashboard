@@ -1,5 +1,7 @@
 streamlit
 yfinance
 pandas
-plotly
 numpy
+plotly
+scipy
+feedparser
