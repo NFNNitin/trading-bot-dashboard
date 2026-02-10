@@ -76,6 +76,10 @@ if 'symbol_1' not in st.session_state:
     st.session_state.symbol_1 = 'BTC-USD'
 if 'symbol_2' not in st.session_state:
     st.session_state.symbol_2 = 'GC=F'
+if 'backtest_log' not in st.session_state:
+    st.session_state.backtest_log = []
+if 'show_backtest' not in st.session_state:
+    st.session_state.show_backtest = False
 
 # --- LIVE PRICE FEED FOR MULTIPLE ASSETS ---
 def get_live_prices():
@@ -437,59 +441,306 @@ def generate_advanced_signal(df, timeframe_name):
         "Signals": signals
     }
 
-# --- 5. PRICE PREDICTION ENGINE ---
+# --- 5. ADVANCED PREDICTION ENGINE WITH ML TECHNIQUES ---
 def predict_price_movement(df, timeframe):
-    """Advanced price prediction using multiple methods"""
+    """
+    Enhanced prediction using multiple methods with machine learning principles:
+    1. Weighted Linear Regression (time-decay weights)
+    2. Momentum-adjusted EMA prediction
+    3. Mean Reversion (Bollinger Bands + RSI)
+    4. Volume-Weighted Price Analysis
+    5. Support/Resistance Levels
+    6. Trend Strength Adjustment (ADX)
+    """
     if len(df) < 50:
         return None
     
     curr_price = df['Close'].iloc[-1]
     predictions = {}
+    weights = {}
     
-    # Method 1: Linear Regression on recent trend
-    recent_data = df['Close'].tail(20).values
+    # --- METHOD 1: Weighted Linear Regression (Recent data more important) ---
+    recent_data = df['Close'].tail(30).values
     x = np.arange(len(recent_data))
-    slope, intercept, r_value, p_value, std_err = stats.linregress(x, recent_data)
+    # Apply exponential weights (recent data weighted higher)
+    time_weights = np.exp(x / len(recent_data))
     
-    # Predict next 1, 3, 5 periods
-    predictions['Linear_1'] = slope * len(recent_data) + intercept
-    predictions['Linear_3'] = slope * (len(recent_data) + 2) + intercept
-    predictions['Linear_5'] = slope * (len(recent_data) + 4) + intercept
+    # Weighted regression
+    weighted_mean_x = np.average(x, weights=time_weights)
+    weighted_mean_y = np.average(recent_data, weights=time_weights)
     
-    # Method 2: EMA-based prediction
-    ema_momentum = df['EMA9'].iloc[-1] - df['EMA21'].iloc[-1]
-    predictions['EMA_Based'] = curr_price + (ema_momentum * 0.5)
+    numerator = np.sum(time_weights * (x - weighted_mean_x) * (recent_data - weighted_mean_y))
+    denominator = np.sum(time_weights * (x - weighted_mean_x) ** 2)
     
-    # Method 3: Bollinger Band reversion
-    if curr_price < df['BB_Lower'].iloc[-1]:
-        predictions['BB_Reversion'] = df['BB_Middle'].iloc[-1]
-    elif curr_price > df['BB_Upper'].iloc[-1]:
-        predictions['BB_Reversion'] = df['BB_Middle'].iloc[-1]
+    if denominator != 0:
+        slope = numerator / denominator
+        intercept = weighted_mean_y - slope * weighted_mean_x
+        predictions['Weighted_Linear'] = slope * len(recent_data) + intercept
+        
+        # Calculate R-squared for confidence
+        y_pred = slope * x + intercept
+        ss_res = np.sum((recent_data - y_pred) ** 2)
+        ss_tot = np.sum((recent_data - np.mean(recent_data)) ** 2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+        weights['Weighted_Linear'] = abs(r_squared) * 2
     else:
-        predictions['BB_Reversion'] = curr_price
+        predictions['Weighted_Linear'] = curr_price
+        weights['Weighted_Linear'] = 0.5
     
-    # Method 4: ATR-based range prediction
+    # --- METHOD 2: Momentum-Adjusted EMA Prediction ---
+    ema9 = df['EMA9'].iloc[-1]
+    ema21 = df['EMA21'].iloc[-1]
+    ema50 = df['EMA50'].iloc[-1]
+    
+    # Calculate momentum from multiple EMAs
+    short_momentum = ema9 - ema21
+    medium_momentum = ema21 - ema50
+    
+    # Momentum strength (0-1 scale)
+    momentum_strength = min(abs(short_momentum / curr_price), 0.02)  # Cap at 2%
+    
+    # Predict based on aligned momentum
+    if short_momentum > 0 and medium_momentum > 0:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 1.5)
+        weights['Momentum_EMA'] = 2.0
+    elif short_momentum < 0 and medium_momentum < 0:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 1.5)
+        weights['Momentum_EMA'] = 2.0
+    else:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 0.5)
+        weights['Momentum_EMA'] = 1.0
+    
+    # --- METHOD 3: Mean Reversion with RSI Confirmation ---
+    bb_upper = df['BB_Upper'].iloc[-1]
+    bb_middle = df['BB_Middle'].iloc[-1]
+    bb_lower = df['BB_Lower'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    
+    # Calculate distance from bands
+    if curr_price < bb_lower and rsi < 35:
+        # Oversold - expect reversion up
+        predictions['Mean_Reversion'] = bb_middle
+        weights['Mean_Reversion'] = 2.5  # High confidence in reversion
+    elif curr_price > bb_upper and rsi > 65:
+        # Overbought - expect reversion down
+        predictions['Mean_Reversion'] = bb_middle
+        weights['Mean_Reversion'] = 2.5
+    else:
+        # Not at extremes
+        predictions['Mean_Reversion'] = curr_price
+        weights['Mean_Reversion'] = 0.8
+    
+    # --- METHOD 4: Volume-Weighted Price Projection ---
+    recent_volume = df['Volume'].tail(10).values
+    recent_prices = df['Close'].tail(10).values
+    
+    if recent_volume.sum() > 0:
+        vwap_recent = np.sum(recent_prices * recent_volume) / recent_volume.sum()
+        volume_trend = recent_volume[-3:].mean() / recent_volume[:-3].mean()
+        
+        # If volume increasing, price likely to continue direction
+        if volume_trend > 1.2:
+            direction = 1 if curr_price > vwap_recent else -1
+            predictions['Volume_Weighted'] = curr_price + (direction * abs(curr_price - vwap_recent) * 0.3)
+            weights['Volume_Weighted'] = 1.5
+        else:
+            predictions['Volume_Weighted'] = vwap_recent
+            weights['Volume_Weighted'] = 1.0
+    else:
+        predictions['Volume_Weighted'] = curr_price
+        weights['Volume_Weighted'] = 0.5
+    
+    # --- METHOD 5: Support/Resistance Levels ---
+    # Find recent swing highs and lows
+    window = 20
+    recent_highs = df['High'].tail(window)
+    recent_lows = df['Low'].tail(window)
+    
+    resistance = recent_highs.quantile(0.95)
+    support = recent_lows.quantile(0.05)
+    
+    # Predict based on proximity to S/R
+    distance_to_resistance = (resistance - curr_price) / curr_price
+    distance_to_support = (curr_price - support) / curr_price
+    
+    if distance_to_resistance < 0.01:  # Within 1% of resistance
+        predictions['SR_Level'] = curr_price - (curr_price * 0.005)  # Slight pullback
+        weights['SR_Level'] = 1.5
+    elif distance_to_support < 0.01:  # Within 1% of support
+        predictions['SR_Level'] = curr_price + (curr_price * 0.005)  # Slight bounce
+        weights['SR_Level'] = 1.5
+    else:
+        predictions['SR_Level'] = curr_price
+        weights['SR_Level'] = 1.0
+    
+    # --- METHOD 6: Trend Strength (ADX) Adjustment ---
+    adx = df['ADX'].iloc[-1]
+    
+    # Strong trend (ADX > 25) - trend continuation more likely
+    if adx > 25:
+        trend_direction = 1 if ema9 > ema21 else -1
+        predictions['Trend_ADX'] = curr_price + (trend_direction * curr_price * 0.01)
+        weights['Trend_ADX'] = (adx / 25)  # Scale weight by ADX strength
+    else:
+        predictions['Trend_ADX'] = curr_price
+        weights['Trend_ADX'] = 0.5
+    
+    # --- ENSEMBLE PREDICTION (Weighted Average) ---
+    total_weight = sum(weights.values())
+    weighted_prediction = sum(pred * weights[key] for key, pred in predictions.items()) / total_weight
+    
+    # Calculate prediction metrics
+    movement_pct = ((weighted_prediction - curr_price) / curr_price) * 100
+    
+    # ATR-based range
     atr = df['ATR'].iloc[-1]
-    predictions['Upper_Range'] = curr_price + (atr * 1.5)
-    predictions['Lower_Range'] = curr_price - (atr * 1.5)
+    upper_range = curr_price + (atr * 1.5)
+    lower_range = curr_price - (atr * 1.5)
     
-    # Ensemble prediction (average of methods)
-    prediction_values = [predictions['Linear_1'], predictions['EMA_Based'], predictions['BB_Reversion']]
-    ensemble = np.mean(prediction_values)
+    # Overall confidence (normalized)
+    base_confidence = (total_weight / len(predictions)) * 100
     
-    movement = ((ensemble - curr_price) / curr_price) * 100
+    # Adjust confidence based on volatility
+    volatility_factor = min(atr / curr_price, 0.1) * 100
+    adjusted_confidence = max(min(base_confidence - volatility_factor, 95), 30)
     
     return {
         'current': curr_price,
-        'predicted': ensemble,
-        'movement_pct': movement,
-        'upper_range': predictions['Upper_Range'],
-        'lower_range': predictions['Lower_Range'],
-        'confidence': abs(r_value) * 100,  # R-squared as confidence
-        'direction': '📈 UP' if movement > 0 else '📉 DOWN',
-        'strength': 'Strong' if abs(movement) > 1 else 'Moderate' if abs(movement) > 0.3 else 'Weak'
+        'predicted': weighted_prediction,
+        'movement_pct': movement_pct,
+        'upper_range': upper_range,
+        'lower_range': lower_range,
+        'confidence': adjusted_confidence,
+        'direction': '📈 UP' if movement_pct > 0 else '📉 DOWN',
+        'strength': 'Strong' if abs(movement_pct) > 1 else 'Moderate' if abs(movement_pct) > 0.3 else 'Weak',
+        'method_predictions': predictions,
+        'method_weights': weights,
+        'adx': adx,
+        'rsi': rsi
     }
 
+# --- 6. BACKTESTING ENGINE ---
+def run_backtest(df, timeframe_name, periods_ahead=1):
+    """
+    Runs backtest on historical data to validate prediction accuracy
+    
+    Args:
+        df: DataFrame with OHLCV data and indicators
+        timeframe_name: Name of timeframe (5m, 1h, etc.)
+        periods_ahead: How many periods ahead to predict (1 = next candle)
+    
+    Returns:
+        Dictionary with backtest results and metrics
+    """
+    if len(df) < 100:
+        return None
+    
+    results = {
+        'predictions': [],
+        'actuals': [],
+        'timestamps': [],
+        'correct_direction': 0,
+        'total_predictions': 0,
+        'mae': 0,  # Mean Absolute Error
+        'mape': 0,  # Mean Absolute Percentage Error
+        'direction_accuracy': 0,
+        'within_range': 0
+    }
+    
+    # Run predictions on historical data
+    # Start from index 50 to ensure we have enough data for indicators
+    # Stop before the last 'periods_ahead' to have actual data to compare
+    backtest_window = min(len(df) - periods_ahead - 50, 200)  # Test on last 200 periods max
+    
+    for i in range(50, 50 + backtest_window):
+        # Create subset of data up to this point
+        historical_df = df.iloc[:i].copy()
+        
+        # Make prediction
+        prediction = predict_price_movement(historical_df, timeframe_name)
+        
+        if prediction is None:
+            continue
+        
+        # Get actual price 'periods_ahead' later
+        actual_price = df.iloc[i + periods_ahead]['Close']
+        predicted_price = prediction['predicted']
+        current_price_at_time = prediction['current']
+        
+        # Store results
+        results['predictions'].append(predicted_price)
+        results['actuals'].append(actual_price)
+        results['timestamps'].append(df.index[i])
+        
+        # Check direction accuracy
+        predicted_direction = 1 if predicted_price > current_price_at_time else -1
+        actual_direction = 1 if actual_price > current_price_at_time else -1
+        
+        if predicted_direction == actual_direction:
+            results['correct_direction'] += 1
+        
+        # Check if actual price was within predicted range
+        if prediction['lower_range'] <= actual_price <= prediction['upper_range']:
+            results['within_range'] += 1
+        
+        results['total_predictions'] += 1
+    
+    if results['total_predictions'] > 0:
+        # Calculate metrics
+        predictions_arr = np.array(results['predictions'])
+        actuals_arr = np.array(results['actuals'])
+        
+        # Mean Absolute Error
+        results['mae'] = np.mean(np.abs(predictions_arr - actuals_arr))
+        
+        # Mean Absolute Percentage Error
+        results['mape'] = np.mean(np.abs((actuals_arr - predictions_arr) / actuals_arr)) * 100
+        
+        # Direction Accuracy
+        results['direction_accuracy'] = (results['correct_direction'] / results['total_predictions']) * 100
+        
+        # Range Accuracy (how often actual price was within predicted range)
+        results['range_accuracy'] = (results['within_range'] / results['total_predictions']) * 100
+        
+        # Recent performance (last 20 predictions)
+        recent_count = min(20, results['total_predictions'])
+        recent_correct = sum(1 for i in range(-recent_count, 0) 
+                           if (predictions_arr[i] > predictions_arr[i-1]) == (actuals_arr[i] > actuals_arr[i-1]))
+        results['recent_accuracy'] = (recent_correct / recent_count) * 100 if recent_count > 0 else 0
+    
+    return results
+
+def format_backtest_summary(backtest_results):
+    """Creates a formatted summary of backtest results"""
+    if not backtest_results or backtest_results['total_predictions'] == 0:
+        return "❌ Not enough data for backtesting"
+    
+    # Determine performance grade
+    dir_acc = backtest_results['direction_accuracy']
+    if dir_acc >= 70:
+        grade = "🏆 Excellent"
+        color = "green"
+    elif dir_acc >= 60:
+        grade = "✅ Good"
+        color = "lightgreen"
+    elif dir_acc >= 50:
+        grade = "⚠️ Fair"
+        color = "orange"
+    else:
+        grade = "❌ Poor"
+        color = "red"
+    
+    summary = f"""
+    **Backtest Performance: {grade}**
+    
+    📊 **Direction Accuracy:** {dir_acc:.1f}%
+    📈 **Recent Performance (Last 20):** {backtest_results['recent_accuracy']:.1f}%
+    🎯 **Range Accuracy:** {backtest_results['range_accuracy']:.1f}%
+    📉 **Avg Error:** {backtest_results['mape']:.2f}%
+    🔢 **Total Predictions Tested:** {backtest_results['total_predictions']}
+    """
+    
+    return summary, color, dir_acc
 # --- 6. TRADE SETUP CALCULATOR ---
 def calculate_trade(price, atr, mode="LONG", style="Scalp", risk_reward=1.5):
     """Enhanced trade calculator with risk management"""
@@ -521,6 +772,166 @@ def calculate_trade(price, atr, mode="LONG", style="Scalp", risk_reward=1.5):
 # ============================================
 # RENDER FUNCTIONS
 # ============================================
+
+def render_backtest_results(data_sets, symbol):
+    """Renders comprehensive backtest results with visualizations"""
+    
+    st.subheader("🧪 Backtest & Prediction Accuracy Report")
+    
+    st.info("""
+    **How This Works:** We test our prediction model on historical data by:
+    1. Making predictions at each historical point
+    2. Comparing predictions to actual prices that occurred
+    3. Calculating accuracy metrics across all timeframes
+    """)
+    
+    # Run backtests for multiple timeframes
+    timeframes = ['5m', '15m', '1h', '4h']
+    backtest_data = {}
+    
+    with st.spinner("Running backtests on historical data..."):
+        for tf in timeframes:
+            df = add_indicators(data_sets[tf])
+            # Adjust periods_ahead based on timeframe
+            periods = 1 if tf in ['5m', '15m'] else 1
+            backtest_data[tf] = run_backtest(df, tf, periods_ahead=periods)
+    
+    # Display summary cards
+    st.markdown("### 📊 Accuracy by Timeframe")
+    
+    cols = st.columns(4)
+    overall_accuracy = []
+    
+    for idx, tf in enumerate(timeframes):
+        result = backtest_data[tf]
+        with cols[idx]:
+            if result and result['total_predictions'] > 0:
+                summary, color, acc = format_backtest_summary(result)
+                st.markdown(f"**{tf.upper()} Timeframe**")
+                st.markdown(summary)
+                overall_accuracy.append(acc)
+            else:
+                st.warning(f"{tf}: Not enough data")
+    
+    st.divider()
+    
+    # Overall Performance Metrics
+    if overall_accuracy:
+        avg_accuracy = np.mean(overall_accuracy)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("🎯 Average Accuracy", f"{avg_accuracy:.1f}%")
+        
+        with col2:
+            best_tf = timeframes[np.argmax(overall_accuracy)]
+            st.metric("🏆 Best Timeframe", best_tf.upper(), f"{max(overall_accuracy):.1f}%")
+        
+        with col3:
+            # Calculate consistency (lower std dev = more consistent)
+            consistency = 100 - min(np.std(overall_accuracy), 30)
+            st.metric("📈 Consistency", f"{consistency:.1f}%")
+    
+    st.divider()
+    
+    # Detailed Analysis - Choose timeframe
+    st.markdown("### 🔍 Detailed Performance Analysis")
+    
+    selected_tf = st.selectbox("Select Timeframe for Details:", timeframes, index=2)
+    
+    result = backtest_data[selected_tf]
+    
+    if result and result['total_predictions'] > 0:
+        # Performance breakdown
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 📊 Accuracy Metrics")
+            st.write(f"✅ **Direction Accuracy:** {result['direction_accuracy']:.1f}%")
+            st.write(f"🎯 **Range Accuracy:** {result['range_accuracy']:.1f}%")
+            st.write(f"📈 **Recent Performance:** {result['recent_accuracy']:.1f}%")
+            st.write(f"📉 **Avg % Error (MAPE):** {result['mape']:.2f}%")
+            st.write(f"🔢 **Total Tests:** {result['total_predictions']}")
+            
+            # Interpretation
+            st.markdown("---")
+            st.markdown("**💡 What This Means:**")
+            if result['direction_accuracy'] >= 60:
+                st.success("✅ Model shows good predictive power for price direction")
+            elif result['direction_accuracy'] >= 50:
+                st.warning("⚠️ Model shows moderate accuracy - use with caution")
+            else:
+                st.error("❌ Model needs improvement - consider this timeframe less reliable")
+        
+        with col2:
+            st.markdown("#### 📈 Prediction vs Actual")
+            
+            # Create comparison chart
+            if len(result['predictions']) > 0:
+                # Use last 50 predictions for visualization
+                chart_size = min(50, len(result['predictions']))
+                
+                fig = go.Figure()
+                
+                # Actual prices
+                fig.add_trace(go.Scatter(
+                    x=list(range(chart_size)),
+                    y=result['actuals'][-chart_size:],
+                    name='Actual Price',
+                    line=dict(color='blue', width=2)
+                ))
+                
+                # Predicted prices
+                fig.add_trace(go.Scatter(
+                    x=list(range(chart_size)),
+                    y=result['predictions'][-chart_size:],
+                    name='Predicted Price',
+                    line=dict(color='orange', width=2, dash='dash')
+                ))
+                
+                fig.update_layout(
+                    title=f"Last {chart_size} Predictions vs Actual",
+                    xaxis_title="Test Number",
+                    yaxis_title="Price",
+                    height=400,
+                    template="plotly_dark",
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider()
+        
+        # Recommendations based on results
+        st.markdown("### 💡 AI Model Recommendations")
+        
+        recommendations = []
+        
+        if result['direction_accuracy'] >= 65:
+            recommendations.append("✅ **High Confidence:** This timeframe shows strong prediction accuracy. Suitable for trading decisions.")
+        
+        if result['range_accuracy'] >= 70:
+            recommendations.append("✅ **Reliable Ranges:** Price ranges are accurate. Use stop-loss and take-profit levels with confidence.")
+        
+        if result['recent_accuracy'] > result['direction_accuracy'] + 5:
+            recommendations.append("📈 **Improving Performance:** Recent predictions are more accurate. Model is adapting well to current market conditions.")
+        elif result['recent_accuracy'] < result['direction_accuracy'] - 5:
+            recommendations.append("⚠️ **Performance Decline:** Recent accuracy is lower. Market conditions may have changed. Exercise caution.")
+        
+        if result['mape'] < 1.5:
+            recommendations.append("🎯 **Low Error Rate:** Prediction errors are minimal. High precision model.")
+        elif result['mape'] > 5:
+            recommendations.append("⚠️ **High Volatility:** Large prediction errors detected. Consider using wider stop-losses.")
+        
+        if result['direction_accuracy'] < 55:
+            recommendations.append("❌ **Unreliable Timeframe:** Consider using longer timeframes or additional confirmation before trading.")
+        
+        for rec in recommendations:
+            st.markdown(rec)
+    
+    else:
+        st.warning(f"Not enough data to backtest {selected_tf} timeframe")
 
 def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     """Renders the full single asset analysis view"""
@@ -568,6 +979,30 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Show prediction methods breakdown
+            with st.expander("🔬 See Prediction Method Details"):
+                st.markdown("**How This Prediction Was Made:**")
+                st.write("Our AI uses 6 different prediction methods and combines them with intelligent weighting:")
+                
+                method_names = {
+                    'Weighted_Linear': '📈 Time-Weighted Trend Analysis',
+                    'Momentum_EMA': '🚀 Multi-EMA Momentum',
+                    'Mean_Reversion': '🔄 Bollinger Band Mean Reversion',
+                    'Volume_Weighted': '📊 Volume-Weighted Analysis',
+                    'SR_Level': '🎯 Support/Resistance Levels',
+                    'Trend_ADX': '💪 ADX Trend Strength'
+                }
+                
+                for method_key, method_name in method_names.items():
+                    if method_key in pred_1h['method_predictions']:
+                        pred_val = pred_1h['method_predictions'][method_key]
+                        weight = pred_1h['method_weights'][method_key]
+                        st.write(f"{method_name}: ${pred_val:,.2f} (Weight: {weight:.1f})")
+                
+                st.divider()
+                st.caption(f"📊 ADX (Trend Strength): {pred_1h['adx']:.1f}")
+                st.caption(f"📈 RSI (Momentum): {pred_1h['rsi']:.1f}")
     
     with pred_cols[1]:
         if pred_5m and pred_4h:
@@ -580,6 +1015,11 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             st.write(f"Strength: {pred_4h['strength']}")
     
     st.divider()
+    
+    # Backtest section (conditional)
+    if st.session_state.show_backtest:
+        render_backtest_results(data_sets, symbol)
+        st.divider()
     
     # Multi-timeframe + strategies
     render_timeframe_scanner(data_sets, risk_reward, position_size)
@@ -886,6 +1326,19 @@ if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
 
 # Auto-refresh toggle
 st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.auto_refresh)
+
+st.sidebar.divider()
+
+# Backtest Section
+st.sidebar.subheader("🧪 Backtest & Validation")
+if st.sidebar.button("📊 Run Backtest", use_container_width=True):
+    st.session_state.show_backtest = not st.session_state.show_backtest
+    st.rerun()
+
+if st.session_state.show_backtest:
+    st.sidebar.success("✅ Backtest results visible below")
+else:
+    st.sidebar.info("Click to view prediction accuracy")
 
 st.sidebar.divider()
 
