@@ -94,6 +94,10 @@ if 'backtest_log' not in st.session_state:
     st.session_state.backtest_log = []
 if 'show_backtest' not in st.session_state:
     st.session_state.show_backtest = False
+if 'mobile_mode' not in st.session_state:
+    st.session_state.mobile_mode = False
+if 'alert_threshold' not in st.session_state:
+    st.session_state.alert_threshold = 90
 
 # --- LIVE PRICE FEED FOR MULTIPLE ASSETS ---
 def get_live_prices():
@@ -171,6 +175,329 @@ def get_crypto_news():
         ]
     
     return news_items[:10]  # Return top 10 news items
+
+# --- PROFESSIONAL-GRADE ANALYSIS LAYERS ---
+
+# --- 1. SENTIMENT ANALYSIS ENGINE ---
+def get_sentiment_score(symbol, news_items=None):
+    """
+    Analyzes market sentiment from news and social data
+    Returns: sentiment score (-100 to +100) and classification
+    """
+    sentiment_score = 0
+    sentiment_signals = []
+    
+    # If we have news items, analyze them
+    if news_items:
+        # Simple keyword-based sentiment (in production, use NLP models)
+        bullish_keywords = ['surge', 'rally', 'bullish', 'gain', 'rise', 'up', 'breakthrough', 
+                           'adoption', 'partnership', 'growth', 'positive', 'strong']
+        bearish_keywords = ['crash', 'drop', 'fall', 'bearish', 'decline', 'down', 'negative',
+                           'warning', 'concern', 'risk', 'sell', 'weak']
+        
+        for item in news_items[:5]:  # Check recent 5 news items
+            title = item['title'].lower()
+            
+            bullish_count = sum(1 for word in bullish_keywords if word in title)
+            bearish_count = sum(1 for word in bearish_keywords if word in title)
+            
+            if bullish_count > bearish_count:
+                sentiment_score += 15
+                sentiment_signals.append(f"📰 Bullish news: {item['title'][:50]}...")
+            elif bearish_count > bullish_count:
+                sentiment_score -= 15
+                sentiment_signals.append(f"📰 Bearish news: {item['title'][:50]}...")
+    
+    # Market context analysis based on asset type
+    if 'BTC' in symbol or 'ETH' in symbol:
+        # Crypto-specific sentiment factors
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            # Volume trend (high volume = high interest)
+            hist = ticker.history(period='5d')
+            if len(hist) > 1:
+                recent_volume = hist['Volume'].tail(2).mean()
+                avg_volume = hist['Volume'].mean()
+                
+                if recent_volume > avg_volume * 1.5:
+                    sentiment_score += 10
+                    sentiment_signals.append("📊 Volume surge (+10)")
+                elif recent_volume < avg_volume * 0.5:
+                    sentiment_score -= 10
+                    sentiment_signals.append("📊 Volume declining (-10)")
+        except:
+            pass
+    
+    # Normalize to -100 to +100
+    sentiment_score = max(min(sentiment_score, 100), -100)
+    
+    # Classify sentiment
+    if sentiment_score >= 60:
+        classification = "🟢 Strongly Bullish"
+    elif sentiment_score >= 30:
+        classification = "🟢 Bullish"
+    elif sentiment_score >= -30:
+        classification = "🟡 Neutral"
+    elif sentiment_score >= -60:
+        classification = "🔴 Bearish"
+    else:
+        classification = "🔴 Strongly Bearish"
+    
+    return {
+        'score': sentiment_score,
+        'classification': classification,
+        'signals': sentiment_signals
+    }
+
+# --- 2. VOLUME PROFILE ANALYSIS ---
+def calculate_volume_profile(df, num_bins=20):
+    """
+    Calculates Volume Profile to identify high-volume price levels
+    These are key support/resistance zones where institutions accumulate
+    """
+    if len(df) < 50:
+        return None
+    
+    # Get price range
+    price_min = df['Low'].min()
+    price_max = df['High'].max()
+    
+    # Create price bins
+    bins = np.linspace(price_min, price_max, num_bins)
+    
+    # Calculate volume at each price level
+    volume_at_price = np.zeros(num_bins - 1)
+    
+    for i in range(len(df)):
+        candle_low = df['Low'].iloc[i]
+        candle_high = df['High'].iloc[i]
+        candle_volume = df['Volume'].iloc[i]
+        
+        # Distribute volume across bins that this candle touched
+        for j in range(num_bins - 1):
+            if bins[j] <= candle_high and bins[j + 1] >= candle_low:
+                volume_at_price[j] += candle_volume / num_bins
+    
+    # Find value area (70% of volume)
+    total_volume = volume_at_price.sum()
+    sorted_indices = np.argsort(volume_at_price)[::-1]
+    
+    cumulative_volume = 0
+    value_area_indices = []
+    
+    for idx in sorted_indices:
+        cumulative_volume += volume_at_price[idx]
+        value_area_indices.append(idx)
+        if cumulative_volume >= total_volume * 0.7:
+            break
+    
+    # Calculate POC (Point of Control - highest volume)
+    poc_index = np.argmax(volume_at_price)
+    poc_price = (bins[poc_index] + bins[poc_index + 1]) / 2
+    
+    # Value Area High and Low
+    value_area_indices = sorted(value_area_indices)
+    va_low = bins[value_area_indices[0]]
+    va_high = bins[value_area_indices[-1] + 1]
+    
+    return {
+        'bins': bins,
+        'volume': volume_at_price,
+        'poc': poc_price,
+        'va_high': va_high,
+        'va_low': va_low
+    }
+
+# --- 3. ORDER FLOW DETECTION ---
+def detect_order_flow(df):
+    """
+    Analyzes order flow to detect institutional buying/selling
+    Looks for aggressive vs passive orders
+    """
+    if len(df) < 10:
+        return None
+    
+    signals = []
+    strength = 0
+    
+    recent = df.tail(10)
+    
+    # Detect buying pressure vs selling pressure
+    for i in range(1, len(recent)):
+        prev = recent.iloc[i-1]
+        curr = recent.iloc[i]
+        
+        # Strong buying: close near high, volume increasing
+        if (curr['Close'] - curr['Low']) / (curr['High'] - curr['Low'] + 0.0001) > 0.7:
+            if curr['Volume'] > prev['Volume'] * 1.2:
+                strength += 2
+                signals.append("🟢 Aggressive buying detected")
+        
+        # Strong selling: close near low, volume increasing  
+        elif (curr['High'] - curr['Close']) / (curr['High'] - curr['Low'] + 0.0001) > 0.7:
+            if curr['Volume'] > prev['Volume'] * 1.2:
+                strength -= 2
+                signals.append("🔴 Aggressive selling detected")
+    
+    # Absorption detection (large volume, small price movement = institutional accumulation)
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+        body_size = abs(candle['Close'] - candle['Open'])
+        candle_range = candle['High'] - candle['Low']
+        
+        if body_size < candle_range * 0.3:  # Small body
+            avg_volume = recent['Volume'].mean()
+            if candle['Volume'] > avg_volume * 2:  # High volume
+                signals.append("📊 Absorption detected (institutions accumulating)")
+                strength += 1
+    
+    classification = "Bullish" if strength > 2 else "Bearish" if strength < -2 else "Neutral"
+    
+    return {
+        'strength': strength,
+        'classification': classification,
+        'signals': signals[-3:]  # Last 3 signals
+    }
+
+# --- 4. REGIME DETECTION ---
+def detect_market_regime(df):
+    """
+    Detects if market is Trending, Ranging, or Volatile
+    Different strategies work in different regimes
+    """
+    if len(df) < 50:
+        return None
+    
+    # Calculate regime indicators
+    adx = df['ADX'].iloc[-1]
+    atr = df['ATR'].iloc[-1]
+    current_price = df['Close'].iloc[-1]
+    
+    # Bollinger Band width (volatility measure)
+    bb_width = (df['BB_Upper'].iloc[-1] - df['BB_Lower'].iloc[-1]) / df['BB_Middle'].iloc[-1]
+    
+    # Price position relative to moving averages
+    above_ema200 = current_price > df['EMA200'].iloc[-1]
+    ema_alignment = df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1] > df['EMA50'].iloc[-1]
+    
+    # Determine regime
+    if adx > 25 and ema_alignment:
+        regime = "📈 Strong Trend"
+        strategy = "Trend Following"
+        confidence = "High"
+    elif adx > 25:
+        regime = "📉 Strong Trend (Bearish)"
+        strategy = "Trend Following (Short)"
+        confidence = "High"
+    elif adx < 20 and bb_width < 0.04:
+        regime = "📊 Tight Range"
+        strategy = "Mean Reversion"
+        confidence = "Medium"
+    elif bb_width > 0.08:
+        regime = "💥 High Volatility"
+        strategy = "Breakout Trading"
+        confidence = "Low"
+    else:
+        regime = "🌊 Choppy/Ranging"
+        strategy = "Wait or Range Trade"
+        confidence = "Low"
+    
+    return {
+        'regime': regime,
+        'strategy': strategy,
+        'confidence': confidence,
+        'adx': adx,
+        'bb_width': bb_width * 100,
+        'trending': adx > 25
+    }
+
+# --- 5. CONFLUENCE SCORING (MASTER FORMULA) ---
+def calculate_confluence_score(df, sentiment_data, order_flow, regime):
+    """
+    The 'Master Formula' - combines all analysis layers
+    Returns a weighted score showing overall signal quality
+    """
+    scores = {}
+    weights = {}
+    
+    current_price = df['Close'].iloc[-1]
+    
+    # 1. MACRO FILTER (Sentiment) - 20% weight
+    if sentiment_data:
+        sentiment_contribution = sentiment_data['score'] / 100  # Normalize to 0-1
+        scores['sentiment'] = sentiment_contribution
+        weights['sentiment'] = 0.20
+    else:
+        scores['sentiment'] = 0
+        weights['sentiment'] = 0.20
+    
+    # 2. REGIME FILTER - 25% weight
+    if regime:
+        if regime['confidence'] == 'High':
+            regime_score = 1.0
+        elif regime['confidence'] == 'Medium':
+            regime_score = 0.6
+        else:
+            regime_score = 0.3
+        
+        scores['regime'] = regime_score
+        weights['regime'] = 0.25
+    else:
+        scores['regime'] = 0.5
+        weights['regime'] = 0.25
+    
+    # 3. TECHNICAL ALIGNMENT - 30% weight
+    ema9 = df['EMA9'].iloc[-1]
+    ema21 = df['EMA21'].iloc[-1]
+    ema50 = df['EMA50'].iloc[-1]
+    ema200 = df['EMA200'].iloc[-1]
+    
+    technical_score = 0
+    if current_price > ema200:
+        technical_score += 0.4
+    if ema9 > ema21 > ema50:
+        technical_score += 0.6
+    
+    scores['technical'] = technical_score
+    weights['technical'] = 0.30
+    
+    # 4. ORDER FLOW - 15% weight
+    if order_flow:
+        flow_score = (order_flow['strength'] + 5) / 10  # Normalize -5 to +5 → 0 to 1
+        flow_score = max(0, min(1, flow_score))
+        scores['order_flow'] = flow_score
+        weights['order_flow'] = 0.15
+    else:
+        scores['order_flow'] = 0.5
+        weights['order_flow'] = 0.15
+    
+    # 5. VOLUME CONFIRMATION - 10% weight
+    recent_volume = df['Volume'].tail(5).mean()
+    avg_volume = df['Volume'].tail(50).mean()
+    volume_ratio = recent_volume / avg_volume
+    
+    volume_score = min(volume_ratio / 2, 1.0)  # Cap at 1.0
+    scores['volume'] = volume_score
+    weights['volume'] = 0.10
+    
+    # Calculate weighted confluence
+    total_score = sum(scores[key] * weights[key] for key in scores.keys())
+    total_score = total_score * 100  # Convert to 0-100
+    
+    return {
+        'total_score': total_score,
+        'component_scores': scores,
+        'weights': weights,
+        'breakdown': {
+            'Sentiment': f"{scores.get('sentiment', 0) * 100:.0f}/100",
+            'Regime': f"{scores.get('regime', 0) * 100:.0f}/100",
+            'Technical': f"{scores.get('technical', 0) * 100:.0f}/100",
+            'Order Flow': f"{scores.get('order_flow', 0) * 100:.0f}/100",
+            'Volume': f"{scores.get('volume', 0) * 100:.0f}/100"
+        }
+    }
 
 # --- 1. DATA ENGINE (Advanced Resampling) ---
 def get_data(symbol):
@@ -1104,12 +1431,204 @@ def render_backtest_results(data_sets, symbol):
     else:
         st.warning(f"Not enough data to backtest {selected_tf} timeframe")
 
+def render_professional_confluence(data_sets, symbol, news_items):
+    """Renders the professional-grade confluence analysis"""
+    
+    st.subheader("🎯 Professional Confluence Analysis")
+    
+    st.info("""
+    **Institutional-Grade Signal Scoring** - This combines:
+    📰 Sentiment (News/Market Context) • 🎯 Market Regime Detection • 📊 Technical Alignment • 💼 Order Flow • 📈 Volume
+    """)
+    
+    # Get all analysis components
+    df_1h = add_indicators(data_sets['1h'])
+    df_5m = add_indicators(data_sets['5m'])
+    
+    sentiment = get_sentiment_score(symbol, news_items)
+    order_flow = detect_order_flow(df_5m)
+    regime = detect_market_regime(df_1h)
+    volume_profile = calculate_volume_profile(df_1h)
+    confluence = calculate_confluence_score(df_1h, sentiment, order_flow, regime)
+    
+    # Main Score Display
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        score = confluence['total_score']
+        
+        if score >= 80:
+            st.success(f"### 🏆 CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**INSTITUTIONAL GRADE SETUP** - All systems aligned!")
+        elif score >= 65:
+            st.info(f"### ✅ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**HIGH QUALITY SETUP** - Strong agreement")
+        elif score >= 50:
+            st.warning(f"### ⚠️ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**MODERATE SETUP** - Mixed signals")
+        else:
+            st.error(f"### ❌ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**LOW QUALITY** - Conflicting data")
+    
+    with col2:
+        st.metric("Market Regime", regime['regime'] if regime else "Unknown")
+        st.caption(f"Strategy: {regime['strategy']}" if regime else "")
+    
+    with col3:
+        st.metric("Sentiment", sentiment['classification'])
+        st.caption(f"Score: {sentiment['score']:+.0f}")
+    
+    st.divider()
+    
+    # Component Breakdown
+    st.markdown("### 📊 Score Breakdown (Weighted)")
+    
+    breakdown_cols = st.columns(5)
+    components = [
+        ("📰 Sentiment", confluence['breakdown']['Sentiment'], 0.20),
+        ("🎯 Regime", confluence['breakdown']['Regime'], 0.25),
+        ("📈 Technical", confluence['breakdown']['Technical'], 0.30),
+        ("💼 Order Flow", confluence['breakdown']['Order Flow'], 0.15),
+        ("📊 Volume", confluence['breakdown']['Volume'], 0.10)
+    ]
+    
+    for idx, (name, score_str, weight) in enumerate(components):
+        with breakdown_cols[idx]:
+            st.markdown(f"**{name}**")
+            st.markdown(f"{score_str}")
+            st.caption(f"Weight: {weight*100:.0f}%")
+    
+    st.divider()
+    
+    # Detailed Analysis Panels
+    detail_cols = st.columns(2)
+    
+    with detail_cols[0]:
+        # Sentiment Details
+        st.markdown("#### 📰 Sentiment Analysis")
+        if sentiment['signals']:
+            for signal in sentiment['signals']:
+                st.caption(signal)
+        else:
+            st.caption("No strong sentiment signals detected")
+        
+        # Order Flow Details
+        st.markdown("#### 💼 Order Flow Analysis")
+        if order_flow and order_flow['signals']:
+            st.markdown(f"**{order_flow['classification']}** (Strength: {order_flow['strength']:+d})")
+            for signal in order_flow['signals']:
+                st.caption(signal)
+        else:
+            st.caption("Neutral order flow")
+    
+    with detail_cols[1]:
+        # Regime Details
+        st.markdown("#### 🎯 Market Regime")
+        if regime:
+            st.markdown(f"**{regime['regime']}**")
+            st.caption(f"• ADX: {regime['adx']:.1f} {'(Strong Trend)' if regime['adx'] > 25 else '(Weak Trend)'}")
+            st.caption(f"• BB Width: {regime['bb_width']:.2f}% {'(High Vol)' if regime['bb_width'] > 8 else '(Low Vol)'}")
+            st.caption(f"• Best Strategy: {regime['strategy']}")
+            st.caption(f"• Confidence: {regime['confidence']}")
+        
+        # Volume Profile
+        st.markdown("#### 📊 Volume Profile")
+        if volume_profile:
+            current_price = df_1h['Close'].iloc[-1]
+            st.caption(f"• POC (High Vol Zone): ${volume_profile['poc']:,.2f}")
+            st.caption(f"• Value Area: ${volume_profile['va_low']:,.2f} - ${volume_profile['va_high']:,.2f}")
+            
+            if volume_profile['va_low'] <= current_price <= volume_profile['va_high']:
+                st.caption("✅ Price in Value Area (Fair value zone)")
+            elif current_price > volume_profile['va_high']:
+                st.caption("⚠️ Price above Value Area (Premium zone)")
+            else:
+                st.caption("⚠️ Price below Value Area (Discount zone)")
+    
+    st.divider()
+    
+    # Alert Check
+    if score >= st.session_state.alert_threshold:
+        st.success(f"""
+        ### 🔔 ALERT TRIGGERED!
+        
+        Confluence Score ({score:.1f}) exceeded alert threshold ({st.session_state.alert_threshold})
+        
+        **In production mode, you would receive:**
+        - 📱 Mobile push notification
+        - 📧 Email alert
+        - 💬 SMS/Telegram message
+        
+        ✅ This is an institutional-grade setup!
+        """)
+    
+    # Trading Recommendation
+    st.markdown("### 💡 Confluence-Based Recommendation")
+    
+    if score >= 80:
+        st.success("""
+        **🏆 STRONG CONVICTION TRADE**
+        - All systems aligned (Sentiment, Regime, Technicals, Flow, Volume)
+        - This is the type of setup institutions wait for
+        - Position size: 100% of normal size
+        - Confidence level: Very High
+        """)
+    elif score >= 65:
+        st.info("""
+        **✅ GOOD QUALITY SETUP**
+        - Most systems aligned
+        - Acceptable for experienced traders
+        - Position size: 75-100% of normal size
+        - Confidence level: High
+        """)
+    elif score >= 50:
+        st.warning("""
+        **⚠️ MIXED SIGNALS**
+        - Some conflicting data between systems
+        - Only for very experienced traders with tight risk management
+        - Position size: 25-50% of normal size
+        - Confidence level: Medium
+        """)
+    else:
+        st.error("""
+        **❌ LOW QUALITY SETUP**
+        - Major conflicts between analysis layers
+        - Do NOT trade - wait for better setup
+        - Position size: 0% (skip this trade)
+        - Confidence level: Low
+        """)
+
 def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     """Renders the full single asset analysis view"""
     
     current_price = data_sets['5m'].iloc[-1]['Close']
     price_change_24h = ((current_price - data_sets['1d'].iloc[-2]['Close']) / data_sets['1d'].iloc[-2]['Close']) * 100
     
+    # Mobile mode - simplified view
+    if st.session_state.mobile_mode:
+        st.subheader("📱 Quick View")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("💰 Price", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+        with col2:
+            volume_24h = data_sets['5m']['Volume'].tail(288).sum()
+            st.metric("📊 Volume", f"{volume_24h:,.0f}")
+        
+        st.divider()
+        
+        # Get news and run confluence
+        news_items = get_crypto_news()
+        render_professional_confluence(data_sets, symbol, news_items)
+        
+        st.divider()
+        
+        # Just show key signals
+        render_timeframe_scanner(data_sets, risk_reward, position_size)
+        
+        return  # Skip heavy charts in mobile mode
+    
+    # Full Desktop View
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("💰 Current Price", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
@@ -1122,6 +1641,12 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     with col4:
         volume_24h = data_sets['5m']['Volume'].tail(288).sum()
         st.metric("📊 24h Volume", f"{volume_24h:,.0f}")
+    
+    st.divider()
+    
+    # Professional Confluence Analysis (NEW!)
+    news_items = get_crypto_news()
+    render_professional_confluence(data_sets, symbol, news_items)
     
     st.divider()
     
@@ -1434,10 +1959,11 @@ def render_timeframe_scanner(data_sets, risk_reward, position_size):
 
 
 def render_advanced_chart(data_sets):
-    """Renders the advanced technical chart"""
-    st.subheader("📈 Advanced Price Chart (1H)")
+    """Renders the advanced technical chart with volume profile"""
+    st.subheader("📈 Advanced Price Chart (1H) + Volume Profile")
     
     chart_df = add_indicators(data_sets['1h'])
+    volume_profile = calculate_volume_profile(chart_df)
     
     from plotly.subplots import make_subplots
     
@@ -1446,7 +1972,7 @@ def render_advanced_chart(data_sets):
         shared_xaxes=True,
         vertical_spacing=0.03,
         row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=('Price Action', 'RSI', 'MACD')
+        subplot_titles=('Price Action + Volume Profile', 'RSI', 'MACD')
     )
     
     # Candlestick
@@ -1471,6 +1997,28 @@ def render_advanced_chart(data_sets):
     # Bollinger Bands
     fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], name="BB Upper", line=dict(color='gray', dash='dash', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], name="BB Lower", line=dict(color='gray', dash='dash', width=1)), row=1, col=1)
+    
+    # Volume Profile (NEW!)
+    if volume_profile:
+        # Add POC line
+        fig.add_hline(
+            y=volume_profile['poc'],
+            line_dash="solid",
+            line_color="cyan",
+            line_width=2,
+            annotation_text="POC",
+            row=1, col=1
+        )
+        
+        # Add Value Area
+        fig.add_hrect(
+            y0=volume_profile['va_low'],
+            y1=volume_profile['va_high'],
+            fillcolor="rgba(0, 255, 255, 0.1)",
+            line_width=0,
+            annotation_text="Value Area",
+            row=1, col=1
+        )
     
     # RSI
     fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['RSI'], name="RSI", line=dict(color='purple')), row=2, col=1)
@@ -1568,6 +2116,24 @@ if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
 
 # Auto-refresh toggle
 st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.auto_refresh)
+
+st.sidebar.divider()
+
+# Mobile Mode Toggle
+st.session_state.mobile_mode = st.sidebar.checkbox("📱 Mobile Mode (Simplified)", value=st.session_state.mobile_mode)
+
+st.sidebar.divider()
+
+# Alert Settings
+st.sidebar.subheader("🔔 Alert Settings")
+st.session_state.alert_threshold = st.sidebar.slider(
+    "Confluence Alert Threshold", 
+    50, 100, st.session_state.alert_threshold,
+    help="Get notified when Sentiment + Technical confluence exceeds this %"
+)
+
+if st.sidebar.button("Test Alert 🔔", use_container_width=True):
+    st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
 
 st.sidebar.divider()
 
