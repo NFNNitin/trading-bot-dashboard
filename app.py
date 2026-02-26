@@ -1,1705 +1,3116 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════╗
-║         INSTITUTIONAL AI TRADING SIGNAL PLATFORM — PRO EDITION          ║
-║         Powered by CCXT (Binance) | Multi-Asset | Multi-Timeframe       ║
-╚══════════════════════════════════════════════════════════════════════════╝
-SIGNALS ON TOP · 15m SCALPING ENGINE · ADVANCED CONFLUENCE SCORING
-Supports: Crypto Spot + Futures | Gold (XAU/USDT) | Silver (XAG/USDT)
-"""
-
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import time
-import warnings
-warnings.filterwarnings('ignore')
+from scipy import stats
+import requests
+from collections import Counter
+import re
 
-# ─────────────────────────────────────────────
-# CCXT IMPORT (Binance API)
-# ─────────────────────────────────────────────
-try:
-    import ccxt
-    CCXT_AVAILABLE = True
-except ImportError:
-    CCXT_AVAILABLE = False
-
-# ─────────────────────────────────────────────
-# FEEDPARSER (optional)
-# ─────────────────────────────────────────────
+# Try to import feedparser, use fallback if not available
 try:
     import feedparser
     FEEDPARSER_AVAILABLE = True
 except ImportError:
     FEEDPARSER_AVAILABLE = False
+    st.warning("⚠️ feedparser not installed. News feed will be limited. Install with: pip install feedparser")
 
-# ══════════════════════════════════════════════
-# PAGE CONFIG
-# ══════════════════════════════════════════════
-st.set_page_config(
-    page_title="Institutional AI Trader",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide")
 
-# ══════════════════════════════════════════════
-# CSS STYLING
-# ══════════════════════════════════════════════
+# --- CUSTOM CSS FOR REAL-TIME FEEL ---
 st.markdown("""
 <style>
-  /* Dark base */
-  body, .stApp { background-color: #0a0e17; color: #e0e0e0; }
-
-  /* Ticker bar */
-  .ticker-wrap {
-    background: linear-gradient(90deg,#0d1117,#111827);
-    border: 1px solid #1e2a3a;
-    border-radius: 10px; padding: 14px 18px; margin-bottom: 6px;
-  }
-  .ticker-name { font-size: 11px; color: #6b7a8d; letter-spacing: 1px; }
-  .ticker-price { font-size: 20px; font-weight: 700; color: #f0f0f0; }
-  .ticker-up   { color: #00e676; font-weight: 600; }
-  .ticker-dn   { color: #ff5252; font-weight: 600; }
-
-  /* Signal cards */
-  .sig-card {
-    border-radius: 14px; padding: 22px 18px; text-align: center;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.5); margin-bottom: 4px;
-  }
-  .sig-label  { font-size: 13px; font-weight: 600; letter-spacing: 2px; opacity:.8; }
-  .sig-main   { font-size: 28px; font-weight: 800; margin: 8px 0; }
-  .sig-score  { font-size: 15px; opacity: .85; }
-  .sig-conf   { font-size: 12px; opacity: .65; margin-top: 4px; }
-
-  .card-strong-buy  { background: linear-gradient(135deg,#00c853,#1b5e20); }
-  .card-buy         { background: linear-gradient(135deg,#43a047,#1b5e20); }
-  .card-neutral     { background: linear-gradient(135deg,#37474f,#263238); }
-  .card-sell        { background: linear-gradient(135deg,#e53935,#7f0000); }
-  .card-strong-sell { background: linear-gradient(135deg,#b71c1c,#4a0000); }
-
-  /* Conflict / warning boxes */
-  .conflict-critical {
-    background: rgba(183,28,28,.25); border-left: 4px solid #b71c1c;
-    border-radius: 8px; padding: 14px; margin: 8px 0;
-  }
-  .conflict-high {
-    background: rgba(230,81,0,.2); border-left: 4px solid #e65100;
-    border-radius: 8px; padding: 14px; margin: 8px 0;
-  }
-  .conflict-medium {
-    background: rgba(249,168,37,.15); border-left: 4px solid #f9a825;
-    border-radius: 8px; padding: 14px; margin: 8px 0;
-  }
-
-  /* News item */
-  .news-item {
-    background: #111827; border-left: 3px solid #fca311;
-    border-radius: 8px; padding: 12px; margin: 6px 0;
-  }
-
-  /* Prediction box */
-  .pred-box {
-    background: linear-gradient(135deg,#1a237e,#4a148c);
-    border-radius: 12px; padding: 20px; color: #fff; margin: 10px 0;
-  }
-
-  /* Metric override */
-  [data-testid="stMetricValue"] { color: #f0f0f0 !important; }
-
-  /* Divider */
-  hr { border-color: #1e2a3a !important; }
+    .metric-card {background-color: #0e1117; border: 1px solid #303030; padding: 20px; border-radius: 10px; margin-bottom: 10px;}
+    .bullish {color: #00ff00; font-weight: bold;}
+    .bearish {color: #ff4b4b; font-weight: bold;}
+    .neutral {color: #fca311; font-weight: bold;}
+    .price-ticker {
+        background: linear-gradient(90deg, #1e1e1e 0%, #2d2d2d 100%);
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+        border-left: 4px solid #00ff00;
+    }
+    .news-item {
+        background-color: #1a1a1a;
+        padding: 12px;
+        margin: 8px 0;
+        border-radius: 8px;
+        border-left: 3px solid #fca311;
+    }
+    .prediction-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        margin: 15px 0;
+    }
+    .signal-strong-buy {
+        background-color: #00ff00;
+        color: black;
+        padding: 8px 15px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .signal-strong-sell {
+        background-color: #ff4b4b;
+        color: white;
+        padding: 8px 15px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .conflict-critical {
+        background-color: #ff4b4b;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #darkred;
+        margin: 10px 0;
+    }
+    .conflict-warning {
+        background-color: #fca311;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #ff8800;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════
-# SESSION STATE
-# ══════════════════════════════════════════════
-_defaults = {
-    'last_refresh': datetime.now(),
-    'auto_refresh': True,
-    'current_symbol': 'BTC/USDT',
-    'view_mode': 'Single Asset',
-    'symbol_1': 'BTC/USDT',
-    'symbol_2': 'XAU/USDT',
-    'show_backtest': False,
-    'mobile_mode': False,
-    'alert_threshold': 85,
-    'sentiment_cache': {},
-    'exchange_type': 'spot',        # 'spot' or 'futures'
-    'api_key': '',
-    'api_secret': '',
-}
-for k, v in _defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# --- INITIALIZE SESSION STATE ---
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+if 'auto_refresh' not in st.session_state:
+    st.session_state.auto_refresh = True
+if 'current_symbol' not in st.session_state:
+    st.session_state.current_symbol = 'BTC-USD'
+if 'view_mode' not in st.session_state:
+    st.session_state.view_mode = 'Single Asset'
+if 'symbol_1' not in st.session_state:
+    st.session_state.symbol_1 = 'BTC-USD'
+if 'symbol_2' not in st.session_state:
+    st.session_state.symbol_2 = 'GC=F'
+if 'backtest_log' not in st.session_state:
+    st.session_state.backtest_log = []
+if 'show_backtest' not in st.session_state:
+    st.session_state.show_backtest = False
+if 'mobile_mode' not in st.session_state:
+    st.session_state.mobile_mode = False
+if 'sentiment_cache' not in st.session_state:
+    st.session_state.sentiment_cache = {}
+if 'alert_threshold' not in st.session_state:
+    st.session_state.alert_threshold = 90
+if 'mobile_mode' not in st.session_state:
+    st.session_state.mobile_mode = False
+if 'alert_threshold' not in st.session_state:
+    st.session_state.alert_threshold = 90
 
-# ══════════════════════════════════════════════
-# CCXT / BINANCE DATA ENGINE
-# ══════════════════════════════════════════════
-
-@st.cache_resource
-def get_exchange(api_key='', api_secret='', exchange_type='spot'):
-    """Returns a configured Binance exchange object (spot or futures)."""
-    if not CCXT_AVAILABLE:
-        return None
-    try:
-        if exchange_type == 'futures':
-            ex = ccxt.binanceusdm({
-                'apiKey': api_key or '',
-                'secret': api_secret or '',
-                'enableRateLimit': True,
-                'options': {'defaultType': 'future'},
-            })
-        else:
-            ex = ccxt.binance({
-                'apiKey': api_key or '',
-                'secret': api_secret or '',
-                'enableRateLimit': True,
-            })
-        ex.load_markets()
-        return ex
-    except Exception as e:
-        st.warning(f"Exchange init failed: {e}")
-        return None
-
-
-def _is_futures_symbol(symbol: str) -> bool:
-    """Check if symbol needs futures endpoint."""
-    futures_symbols = {'XAU/USDT', 'XAG/USDT', 'XAU/USDT:USDT', 'XAG/USDT:USDT'}
-    return symbol in futures_symbols or ':USDT' in symbol
-
-
-def fetch_ohlcv(symbol: str, timeframe: str, limit: int = 500) -> pd.DataFrame:
-    """
-    Fetch OHLCV from Binance via CCXT.
-    Automatically routes to futures exchange for metals (XAU, XAG).
-    Falls back to synthetic demo data if CCXT unavailable.
-    """
-    if not CCXT_AVAILABLE:
-        return _synthetic_ohlcv(symbol, timeframe, limit)
-
-    try:
-        use_futures = _is_futures_symbol(symbol)
-        ex = get_exchange(
-            st.session_state.api_key,
-            st.session_state.api_secret,
-            'futures' if use_futures else 'spot'
-        )
-        if ex is None:
-            return _synthetic_ohlcv(symbol, timeframe, limit)
-
-        # Normalise symbol for futures (e.g. XAU/USDT → XAU/USDT:USDT)
-        fetch_sym = symbol
-        if use_futures and ':USDT' not in symbol:
-            fetch_sym = symbol + ':USDT'
-
-        raw = ex.fetch_ohlcv(fetch_sym, timeframe=timeframe, limit=limit)
-        if not raw:
-            return _synthetic_ohlcv(symbol, timeframe, limit)
-
-        df = pd.DataFrame(raw, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        df = df.astype(float)
-        return df
-
-    except Exception as e:
-        st.warning(f"⚠️ Data fetch error for {symbol} ({timeframe}): {e}. Using demo data.")
-        return _synthetic_ohlcv(symbol, timeframe, limit)
-
-
-def _synthetic_ohlcv(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-    """Generates realistic synthetic OHLCV data for demo / fallback."""
-    tf_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
-                  '1h': 60, '2h': 120, '4h': 240, '1d': 1440}
-    mins = tf_minutes.get(timeframe, 60)
-
-    # Base prices for common symbols
-    bases = {
-        'BTC/USDT': 65000, 'ETH/USDT': 3200, 'BNB/USDT': 580,
-        'SOL/USDT': 145, 'XRP/USDT': 0.55, 'ADA/USDT': 0.45,
-        'XAU/USDT': 2320, 'XAG/USDT': 27.5,
-        'DOGE/USDT': 0.13, 'AVAX/USDT': 35,
+# --- LIVE PRICE FEED FOR MULTIPLE ASSETS ---
+def get_live_prices():
+    """Fetches real-time prices for major assets"""
+    symbols = {
+        'BTC-USD': 'Bitcoin',
+        'GC=F': 'Gold',
+        'SI=F': 'Silver',
+        'DX-Y.NYB': 'Dollar Index',
+        'XRP-USD': 'XRP'
     }
-    base = bases.get(symbol, 100)
-    np.random.seed(abs(hash(symbol)) % 9999)
+    
+    prices = {}
+    for symbol, name in symbols.items():
+        try:
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(period='1d', interval='1m')
+            if not data.empty:
+                current = data['Close'].iloc[-1]
+                prev_close = ticker.info.get('previousClose', current)
+                change = ((current - prev_close) / prev_close) * 100
+                prices[name] = {
+                    'price': current,
+                    'change': change,
+                    'symbol': symbol
+                }
+        except:
+            prices[name] = {'price': 0, 'change': 0, 'symbol': symbol}
+    
+    return prices
 
-    end = datetime.now()
-    start = end - timedelta(minutes=mins * limit)
-    idx = pd.date_range(start=start, periods=limit, freq=f'{mins}min')
+# --- LIVE NEWS FEED ---
+def get_crypto_news():
+    """Fetches latest crypto/finance news from RSS feeds"""
+    if not FEEDPARSER_AVAILABLE:
+        # Fallback news items
+        return [
+            {'title': '📰 Install feedparser for live news: pip install feedparser', 
+             'link': '#', 'published': 'Now'},
+            {'title': 'Bitcoin continues strong momentum amid institutional adoption', 
+             'link': 'https://cointelegraph.com', 'published': 'Recent'},
+            {'title': 'Gold prices surge on global economic uncertainty', 
+             'link': 'https://www.reuters.com/markets/commodities', 'published': 'Recent'},
+            {'title': 'Crypto markets show resilience in volatile trading session', 
+             'link': 'https://cryptonews.com', 'published': 'Recent'},
+            {'title': 'XRP gains traction with new partnerships announced', 
+             'link': 'https://cointelegraph.com', 'published': 'Recent'},
+        ]
+    
+    news_items = []
+    
+    # Multiple news sources
+    feeds = [
+        'https://cointelegraph.com/rss',
+        'https://cryptonews.com/news/feed/',
+    ]
+    
+    for feed_url in feeds:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:3]:  # Top 3 from each source
+                news_items.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'published': entry.get('published', 'Recent')
+                })
+        except:
+            continue
+    
+    # If no news fetched, return fallback
+    if not news_items:
+        return [
+            {'title': 'Unable to fetch live news at this time', 
+             'link': '#', 'published': 'Now'},
+        ]
+    
+    return news_items[:10]  # Return top 10 news items
 
-    price = base
-    prices = []
-    for _ in range(limit):
-        chg = np.random.normal(0, base * 0.002)
-        price = max(price + chg, base * 0.5)
-        prices.append(price)
-
-    prices = np.array(prices)
-    noise = base * 0.001
-    df = pd.DataFrame({
-        'Open':   prices + np.random.uniform(-noise, noise, limit),
-        'High':   prices + np.abs(np.random.normal(0, noise * 2, limit)),
-        'Low':    prices - np.abs(np.random.normal(0, noise * 2, limit)),
-        'Close':  prices,
-        'Volume': np.random.uniform(1e6, 1e8, limit),
-    }, index=idx)
-    return df
-
-
-def get_ticker_price(symbol: str) -> dict:
-    """Fetches latest ticker data for the market feed."""
-    if not CCXT_AVAILABLE:
-        bases = {
-            'BTC/USDT': 65000, 'ETH/USDT': 3200, 'BNB/USDT': 580,
-            'SOL/USDT': 145, 'XRP/USDT': 0.55, 'XAU/USDT': 2320, 'XAG/USDT': 27.5,
-        }
-        price = bases.get(symbol, 100)
-        return {'price': price, 'change': np.random.uniform(-2, 2), 'volume': 1e9}
-
+# --- SENTIMENT ANALYSIS ENGINE ---
+def get_sentiment_score(symbol, news_items=None):
+    """
+    Advanced sentiment analysis using NLP on news headlines and social signals
+    Returns sentiment score from -100 (extreme bearish) to +100 (extreme bullish)
+    """
+    
+    # Check cache (refresh every 15 minutes)
+    cache_key = f"{symbol}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    if cache_key in st.session_state.sentiment_cache:
+        return st.session_state.sentiment_cache[cache_key]
+    
+    sentiment_signals = []
+    
+    # --- SIGNAL 1: News Headline Analysis ---
+    if news_items is None:
+        news_items = get_crypto_news()
+    
+    # Define sentiment keywords
+    bullish_keywords = [
+        'surge', 'rally', 'gain', 'up', 'rise', 'bullish', 'break', 'high',
+        'growth', 'profit', 'strong', 'positive', 'breakthrough', 'adoption',
+        'institutional', 'buy', 'accumulation', 'support', 'recovery', 'rebound'
+    ]
+    
+    bearish_keywords = [
+        'crash', 'fall', 'drop', 'down', 'decline', 'bearish', 'low', 'loss',
+        'weak', 'negative', 'concern', 'risk', 'sell', 'dump', 'resistance',
+        'fear', 'panic', 'liquidation', 'hack', 'ban', 'regulation'
+    ]
+    
+    news_sentiment = 0
+    news_count = 0
+    
+    for item in news_items[:10]:
+        title = item.get('title', '').lower()
+        
+        # Count keyword matches
+        bull_matches = sum(1 for word in bullish_keywords if word in title)
+        bear_matches = sum(1 for word in bearish_keywords if word in title)
+        
+        if bull_matches > bear_matches:
+            news_sentiment += (bull_matches - bear_matches) * 10
+            news_count += 1
+        elif bear_matches > bull_matches:
+            news_sentiment -= (bear_matches - bull_matches) * 10
+            news_count += 1
+    
+    if news_count > 0:
+        news_sentiment = news_sentiment / news_count
+        sentiment_signals.append(('news', news_sentiment, 0.3))  # 30% weight
+    
+    # --- SIGNAL 2: Price Action Sentiment ---
+    # Analyze recent price momentum as sentiment proxy
     try:
-        use_futures = _is_futures_symbol(symbol)
-        ex = get_exchange(
-            st.session_state.api_key,
-            st.session_state.api_secret,
-            'futures' if use_futures else 'spot'
-        )
-        fetch_sym = symbol + ':USDT' if use_futures and ':USDT' not in symbol else symbol
-        ticker = ex.fetch_ticker(fetch_sym)
-        return {
-            'price': ticker.get('last', 0),
-            'change': ticker.get('percentage', 0) or 0,
-            'volume': ticker.get('quoteVolume', 0) or 0,
-        }
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period='1mo', interval='1d')
+        
+        if not hist.empty and len(hist) >= 10:
+            # 1-week performance
+            week_return = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6]) * 100
+            
+            # 1-month performance
+            month_return = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+            
+            # Volume trend (increasing = bullish)
+            recent_vol = hist['Volume'].tail(5).mean()
+            old_vol = hist['Volume'].head(5).mean()
+            vol_trend = ((recent_vol - old_vol) / old_vol) * 100 if old_vol > 0 else 0
+            
+            # Combine into price sentiment
+            price_sentiment = (week_return * 0.4 + month_return * 0.3 + vol_trend * 0.3)
+            price_sentiment = max(min(price_sentiment, 50), -50)  # Cap at ±50
+            
+            sentiment_signals.append(('price', price_sentiment, 0.35))  # 35% weight
     except:
-        return {'price': 0, 'change': 0, 'volume': 0}
-
-
-def get_all_datasets(symbol: str) -> dict | None:
-    """Fetches all required timeframes for a symbol."""
+        pass
+    
+    # --- SIGNAL 3: Volatility Sentiment ---
+    # High volatility = uncertainty = bearish bias
     try:
-        datasets = {
-            '1m':  fetch_ohlcv(symbol, '1m',  limit=300),
-            '3m':  fetch_ohlcv(symbol, '3m',  limit=300),
-            '15m': fetch_ohlcv(symbol, '15m', limit=300),
-            '30m': fetch_ohlcv(symbol, '30m', limit=300),
-            '1h':  fetch_ohlcv(symbol, '1h',  limit=500),
-            '4h':  fetch_ohlcv(symbol, '4h',  limit=300),
-            '1d':  fetch_ohlcv(symbol, '1d',  limit=200),
+        if not hist.empty and len(hist) >= 20:
+            returns = hist['Close'].pct_change().dropna()
+            volatility = returns.std() * 100
+            
+            # Normalize volatility to sentiment score
+            # Low vol (< 2%) = bullish, High vol (> 8%) = bearish
+            if volatility < 2:
+                vol_sentiment = 20
+            elif volatility > 8:
+                vol_sentiment = -20
+            else:
+                vol_sentiment = 20 - ((volatility - 2) / 6) * 40
+            
+            sentiment_signals.append(('volatility', vol_sentiment, 0.15))  # 15% weight
+    except:
+        pass
+    
+    # --- SIGNAL 4: Market Regime Detection ---
+    # Trending vs Ranging (from ADX-like calculation)
+    try:
+        if not hist.empty and len(hist) >= 30:
+            # Calculate if market is trending
+            sma_20 = hist['Close'].rolling(20).mean().iloc[-1]
+            current_price = hist['Close'].iloc[-1]
+            
+            distance_from_ma = ((current_price - sma_20) / sma_20) * 100
+            
+            # Strong trend = higher sentiment confidence
+            if abs(distance_from_ma) > 5:
+                trend_sentiment = 15 if distance_from_ma > 0 else -15
+            else:
+                trend_sentiment = 0  # Ranging market = neutral
+            
+            sentiment_signals.append(('trend', trend_sentiment, 0.2))  # 20% weight
+    except:
+        pass
+    
+    # --- Calculate Weighted Sentiment Score ---
+    if sentiment_signals:
+        total_weight = sum(weight for _, _, weight in sentiment_signals)
+        weighted_sentiment = sum(score * weight for _, score, weight in sentiment_signals) / total_weight
+    else:
+        weighted_sentiment = 0
+    
+    # Normalize to -100 to +100 range
+    final_sentiment = max(min(weighted_sentiment, 100), -100)
+    
+    # Create detailed breakdown
+    result = {
+        'score': final_sentiment,
+        'signals': sentiment_signals,
+        'interpretation': get_sentiment_interpretation(final_sentiment),
+        'confidence': calculate_sentiment_confidence(sentiment_signals)
+    }
+    
+    # Cache the result
+    st.session_state.sentiment_cache[cache_key] = result
+    
+    return result
+
+def get_sentiment_interpretation(score):
+    """Returns human-readable sentiment interpretation"""
+    if score >= 60:
+        return "🟢 EXTREME BULLISH"
+    elif score >= 30:
+        return "🟢 BULLISH"
+    elif score >= 10:
+        return "🟡 SLIGHTLY BULLISH"
+    elif score >= -10:
+        return "⚪ NEUTRAL"
+    elif score >= -30:
+        return "🟡 SLIGHTLY BEARISH"
+    elif score >= -60:
+        return "🔴 BEARISH"
+    else:
+        return "🔴 EXTREME BEARISH"
+
+def calculate_sentiment_confidence(signals):
+    """Calculate how confident we are in the sentiment score"""
+    if not signals:
+        return 0
+    
+    # More signals = higher confidence
+    signal_count_factor = min(len(signals) / 4, 1.0) * 50
+    
+    # Agreement between signals = higher confidence
+    scores = [score for _, score, _ in signals]
+    if scores:
+        # Calculate variance - low variance = high agreement
+        variance = np.var(scores)
+        agreement_factor = max(0, 50 - variance / 10)
+    else:
+        agreement_factor = 0
+    
+    return min(signal_count_factor + agreement_factor, 100)
+
+# --- VOLUME PROFILE ANALYSIS ---
+def calculate_volume_profile(df, num_bins=20):
+    """
+    Calculate volume profile - shows where most trading occurred
+    Returns price levels with highest volume (Value Area)
+    """
+    if len(df) < 50:
+        return None
+    
+    # Get price range
+    price_min = df['Low'].min()
+    price_max = df['High'].max()
+    
+    # Create price bins
+    bins = np.linspace(price_min, price_max, num_bins)
+    
+    # Allocate volume to price bins
+    volume_at_price = np.zeros(num_bins - 1)
+    
+    for idx, row in df.iterrows():
+        # Find which bin this candle's volume belongs to
+        # Use close price as proxy for where volume occurred
+        bin_idx = np.digitize(row['Close'], bins) - 1
+        if 0 <= bin_idx < len(volume_at_price):
+            volume_at_price[bin_idx] += row['Volume']
+    
+    # Calculate Value Area (70% of volume)
+    total_volume = volume_at_price.sum()
+    target_volume = total_volume * 0.7
+    
+    # Find Point of Control (POC) - price with highest volume
+    poc_idx = np.argmax(volume_at_price)
+    poc_price = (bins[poc_idx] + bins[poc_idx + 1]) / 2
+    
+    # Find Value Area High (VAH) and Value Area Low (VAL)
+    sorted_indices = np.argsort(volume_at_price)[::-1]
+    cumulative_vol = 0
+    value_area_indices = []
+    
+    for idx in sorted_indices:
+        cumulative_vol += volume_at_price[idx]
+        value_area_indices.append(idx)
+        if cumulative_vol >= target_volume:
+            break
+    
+    vah_price = bins[max(value_area_indices) + 1]
+    val_price = bins[min(value_area_indices)]
+    
+    return {
+        'bins': bins,
+        'volume': volume_at_price,
+        'poc': poc_price,
+        'vah': vah_price,
+        'val': val_price
+    }
+
+# --- TREND ALIGNMENT FILTER ---
+def get_aligned_signal(analysis_results):
+    """
+    Master confluence check - only signals that pass ALL filters
+    This prevents the 'lagging indicator trap'
+    """
+    
+    sig_5m = analysis_results.get('5m')
+    sig_1h = analysis_results.get('1h')
+    sig_4h = analysis_results.get('4h')
+    
+    if not sig_5m or not sig_1h:
+        return None
+    
+    alignment_score = 0
+    max_score = 100
+    filters_passed = []
+    filters_failed = []
+    
+    # FILTER 1: Timeframe Agreement (40 points)
+    if "BUY" in sig_5m['Signal'] and "BUY" in sig_1h['Signal']:
+        alignment_score += 40
+        filters_passed.append("✅ Timeframes aligned (5m + 1h BULLISH)")
+    elif "SELL" in sig_5m['Signal'] and "SELL" in sig_1h['Signal']:
+        alignment_score += 40
+        filters_passed.append("✅ Timeframes aligned (5m + 1h BEARISH)")
+    else:
+        filters_failed.append("❌ Timeframe conflict (5m vs 1h disagree)")
+    
+    # FILTER 2: Momentum Strength (20 points)
+    if sig_5m['RSI'] > 50 and sig_1h['RSI'] > 50:
+        alignment_score += 20
+        filters_passed.append("✅ Momentum aligned (Both RSI > 50)")
+    elif sig_5m['RSI'] < 50 and sig_1h['RSI'] < 50:
+        alignment_score += 20
+        filters_passed.append("✅ Momentum aligned (Both RSI < 50)")
+    else:
+        filters_failed.append("❌ Momentum divergence")
+    
+    # FILTER 3: Trend Strength (20 points)
+    if sig_5m.get('ADX', 0) > 25:
+        alignment_score += 20
+        filters_passed.append(f"✅ Strong trend (ADX {sig_5m['ADX']:.1f})")
+    else:
+        filters_failed.append(f"❌ Weak trend (ADX {sig_5m.get('ADX', 0):.1f})")
+    
+    # FILTER 4: Not Overbought/Oversold (20 points)
+    if 30 < sig_5m['RSI'] < 70:
+        alignment_score += 20
+        filters_passed.append("✅ RSI in healthy range")
+    else:
+        filters_failed.append("⚠️ RSI extreme zone")
+    
+    # Determine final signal
+    if alignment_score >= 80:
+        signal = "🟢 STRONG CONFLUENCE"
+        tradeable = True
+    elif alignment_score >= 60:
+        signal = "🟡 MODERATE CONFLUENCE"
+        tradeable = True
+    elif alignment_score >= 40:
+        signal = "🟡 WEAK CONFLUENCE"
+        tradeable = False
+    else:
+        signal = "🔴 NO CONFLUENCE"
+        tradeable = False
+    
+    return {
+        'score': alignment_score,
+        'signal': signal,
+        'tradeable': tradeable,
+        'passed': filters_passed,
+        'failed': filters_failed
+    }
+
+# --- PROFESSIONAL-GRADE ANALYSIS LAYERS ---
+
+# --- 1. SENTIMENT ANALYSIS ENGINE ---
+def get_sentiment_score(symbol, news_items=None):
+    """
+    Analyzes market sentiment from news and social data
+    Returns: sentiment score (-100 to +100) and classification
+    """
+    sentiment_score = 0
+    sentiment_signals = []
+    
+    # If we have news items, analyze them
+    if news_items:
+        # Simple keyword-based sentiment (in production, use NLP models)
+        bullish_keywords = ['surge', 'rally', 'bullish', 'gain', 'rise', 'up', 'breakthrough', 
+                           'adoption', 'partnership', 'growth', 'positive', 'strong']
+        bearish_keywords = ['crash', 'drop', 'fall', 'bearish', 'decline', 'down', 'negative',
+                           'warning', 'concern', 'risk', 'sell', 'weak']
+        
+        for item in news_items[:5]:  # Check recent 5 news items
+            title = item['title'].lower()
+            
+            bullish_count = sum(1 for word in bullish_keywords if word in title)
+            bearish_count = sum(1 for word in bearish_keywords if word in title)
+            
+            if bullish_count > bearish_count:
+                sentiment_score += 15
+                sentiment_signals.append(f"📰 Bullish news: {item['title'][:50]}...")
+            elif bearish_count > bullish_count:
+                sentiment_score -= 15
+                sentiment_signals.append(f"📰 Bearish news: {item['title'][:50]}...")
+    
+    # Market context analysis based on asset type
+    if 'BTC' in symbol or 'ETH' in symbol:
+        # Crypto-specific sentiment factors
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            # Volume trend (high volume = high interest)
+            hist = ticker.history(period='5d')
+            if len(hist) > 1:
+                recent_volume = hist['Volume'].tail(2).mean()
+                avg_volume = hist['Volume'].mean()
+                
+                if recent_volume > avg_volume * 1.5:
+                    sentiment_score += 10
+                    sentiment_signals.append("📊 Volume surge (+10)")
+                elif recent_volume < avg_volume * 0.5:
+                    sentiment_score -= 10
+                    sentiment_signals.append("📊 Volume declining (-10)")
+        except:
+            pass
+    
+    # Normalize to -100 to +100
+    sentiment_score = max(min(sentiment_score, 100), -100)
+    
+    # Classify sentiment
+    if sentiment_score >= 60:
+        classification = "🟢 Strongly Bullish"
+    elif sentiment_score >= 30:
+        classification = "🟢 Bullish"
+    elif sentiment_score >= -30:
+        classification = "🟡 Neutral"
+    elif sentiment_score >= -60:
+        classification = "🔴 Bearish"
+    else:
+        classification = "🔴 Strongly Bearish"
+    
+    return {
+        'score': sentiment_score,
+        'classification': classification,
+        'signals': sentiment_signals
+    }
+
+# --- 2. VOLUME PROFILE ANALYSIS ---
+def calculate_volume_profile(df, num_bins=20):
+    """
+    Calculates Volume Profile to identify high-volume price levels
+    These are key support/resistance zones where institutions accumulate
+    """
+    if len(df) < 50:
+        return None
+    
+    # Get price range
+    price_min = df['Low'].min()
+    price_max = df['High'].max()
+    
+    # Create price bins
+    bins = np.linspace(price_min, price_max, num_bins)
+    
+    # Calculate volume at each price level
+    volume_at_price = np.zeros(num_bins - 1)
+    
+    for i in range(len(df)):
+        candle_low = df['Low'].iloc[i]
+        candle_high = df['High'].iloc[i]
+        candle_volume = df['Volume'].iloc[i]
+        
+        # Distribute volume across bins that this candle touched
+        for j in range(num_bins - 1):
+            if bins[j] <= candle_high and bins[j + 1] >= candle_low:
+                volume_at_price[j] += candle_volume / num_bins
+    
+    # Find value area (70% of volume)
+    total_volume = volume_at_price.sum()
+    sorted_indices = np.argsort(volume_at_price)[::-1]
+    
+    cumulative_volume = 0
+    value_area_indices = []
+    
+    for idx in sorted_indices:
+        cumulative_volume += volume_at_price[idx]
+        value_area_indices.append(idx)
+        if cumulative_volume >= total_volume * 0.7:
+            break
+    
+    # Calculate POC (Point of Control - highest volume)
+    poc_index = np.argmax(volume_at_price)
+    poc_price = (bins[poc_index] + bins[poc_index + 1]) / 2
+    
+    # Value Area High and Low
+    value_area_indices = sorted(value_area_indices)
+    va_low = bins[value_area_indices[0]]
+    va_high = bins[value_area_indices[-1] + 1]
+    
+    return {
+        'bins': bins,
+        'volume': volume_at_price,
+        'poc': poc_price,
+        'va_high': va_high,
+        'va_low': va_low
+    }
+
+# --- 3. ORDER FLOW DETECTION ---
+def detect_order_flow(df):
+    """
+    Analyzes order flow to detect institutional buying/selling
+    Looks for aggressive vs passive orders
+    """
+    if len(df) < 10:
+        return None
+    
+    signals = []
+    strength = 0
+    
+    recent = df.tail(10)
+    
+    # Detect buying pressure vs selling pressure
+    for i in range(1, len(recent)):
+        prev = recent.iloc[i-1]
+        curr = recent.iloc[i]
+        
+        # Strong buying: close near high, volume increasing
+        if (curr['Close'] - curr['Low']) / (curr['High'] - curr['Low'] + 0.0001) > 0.7:
+            if curr['Volume'] > prev['Volume'] * 1.2:
+                strength += 2
+                signals.append("🟢 Aggressive buying detected")
+        
+        # Strong selling: close near low, volume increasing  
+        elif (curr['High'] - curr['Close']) / (curr['High'] - curr['Low'] + 0.0001) > 0.7:
+            if curr['Volume'] > prev['Volume'] * 1.2:
+                strength -= 2
+                signals.append("🔴 Aggressive selling detected")
+    
+    # Absorption detection (large volume, small price movement = institutional accumulation)
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+        body_size = abs(candle['Close'] - candle['Open'])
+        candle_range = candle['High'] - candle['Low']
+        
+        if body_size < candle_range * 0.3:  # Small body
+            avg_volume = recent['Volume'].mean()
+            if candle['Volume'] > avg_volume * 2:  # High volume
+                signals.append("📊 Absorption detected (institutions accumulating)")
+                strength += 1
+    
+    classification = "Bullish" if strength > 2 else "Bearish" if strength < -2 else "Neutral"
+    
+    return {
+        'strength': strength,
+        'classification': classification,
+        'signals': signals[-3:]  # Last 3 signals
+    }
+
+# --- 4. REGIME DETECTION ---
+def detect_market_regime(df):
+    """
+    Detects if market is Trending, Ranging, or Volatile
+    Different strategies work in different regimes
+    """
+    if len(df) < 50:
+        return None
+    
+    # Calculate regime indicators
+    adx = df['ADX'].iloc[-1]
+    atr = df['ATR'].iloc[-1]
+    current_price = df['Close'].iloc[-1]
+    
+    # Bollinger Band width (volatility measure)
+    bb_width = (df['BB_Upper'].iloc[-1] - df['BB_Lower'].iloc[-1]) / df['BB_Middle'].iloc[-1]
+    
+    # Price position relative to moving averages
+    above_ema200 = current_price > df['EMA200'].iloc[-1]
+    ema_alignment = df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1] > df['EMA50'].iloc[-1]
+    
+    # Determine regime
+    if adx > 25 and ema_alignment:
+        regime = "📈 Strong Trend"
+        strategy = "Trend Following"
+        confidence = "High"
+    elif adx > 25:
+        regime = "📉 Strong Trend (Bearish)"
+        strategy = "Trend Following (Short)"
+        confidence = "High"
+    elif adx < 20 and bb_width < 0.04:
+        regime = "📊 Tight Range"
+        strategy = "Mean Reversion"
+        confidence = "Medium"
+    elif bb_width > 0.08:
+        regime = "💥 High Volatility"
+        strategy = "Breakout Trading"
+        confidence = "Low"
+    else:
+        regime = "🌊 Choppy/Ranging"
+        strategy = "Wait or Range Trade"
+        confidence = "Low"
+    
+    return {
+        'regime': regime,
+        'strategy': strategy,
+        'confidence': confidence,
+        'adx': adx,
+        'bb_width': bb_width * 100,
+        'trending': adx > 25
+    }
+
+# --- 5. CONFLUENCE SCORING (MASTER FORMULA) ---
+def calculate_confluence_score(df, sentiment_data, order_flow, regime):
+    """
+    The 'Master Formula' - combines all analysis layers
+    Returns a weighted score showing overall signal quality
+    """
+    scores = {}
+    weights = {}
+    
+    current_price = df['Close'].iloc[-1]
+    
+    # 1. MACRO FILTER (Sentiment) - 20% weight
+    if sentiment_data:
+        sentiment_contribution = sentiment_data['score'] / 100  # Normalize to 0-1
+        scores['sentiment'] = sentiment_contribution
+        weights['sentiment'] = 0.20
+    else:
+        scores['sentiment'] = 0
+        weights['sentiment'] = 0.20
+    
+    # 2. REGIME FILTER - 25% weight
+    if regime:
+        if regime['confidence'] == 'High':
+            regime_score = 1.0
+        elif regime['confidence'] == 'Medium':
+            regime_score = 0.6
+        else:
+            regime_score = 0.3
+        
+        scores['regime'] = regime_score
+        weights['regime'] = 0.25
+    else:
+        scores['regime'] = 0.5
+        weights['regime'] = 0.25
+    
+    # 3. TECHNICAL ALIGNMENT - 30% weight
+    ema9 = df['EMA9'].iloc[-1]
+    ema21 = df['EMA21'].iloc[-1]
+    ema50 = df['EMA50'].iloc[-1]
+    ema200 = df['EMA200'].iloc[-1]
+    
+    technical_score = 0
+    if current_price > ema200:
+        technical_score += 0.4
+    if ema9 > ema21 > ema50:
+        technical_score += 0.6
+    
+    scores['technical'] = technical_score
+    weights['technical'] = 0.30
+    
+    # 4. ORDER FLOW - 15% weight
+    if order_flow:
+        flow_score = (order_flow['strength'] + 5) / 10  # Normalize -5 to +5 → 0 to 1
+        flow_score = max(0, min(1, flow_score))
+        scores['order_flow'] = flow_score
+        weights['order_flow'] = 0.15
+    else:
+        scores['order_flow'] = 0.5
+        weights['order_flow'] = 0.15
+    
+    # 5. VOLUME CONFIRMATION - 10% weight
+    recent_volume = df['Volume'].tail(5).mean()
+    avg_volume = df['Volume'].tail(50).mean()
+    volume_ratio = recent_volume / avg_volume
+    
+    volume_score = min(volume_ratio / 2, 1.0)  # Cap at 1.0
+    scores['volume'] = volume_score
+    weights['volume'] = 0.10
+    
+    # Calculate weighted confluence
+    total_score = sum(scores[key] * weights[key] for key in scores.keys())
+    total_score = total_score * 100  # Convert to 0-100
+    
+    return {
+        'total_score': total_score,
+        'component_scores': scores,
+        'weights': weights,
+        'breakdown': {
+            'Sentiment': f"{scores.get('sentiment', 0) * 100:.0f}/100",
+            'Regime': f"{scores.get('regime', 0) * 100:.0f}/100",
+            'Technical': f"{scores.get('technical', 0) * 100:.0f}/100",
+            'Order Flow': f"{scores.get('order_flow', 0) * 100:.0f}/100",
+            'Volume': f"{scores.get('volume', 0) * 100:.0f}/100"
         }
-        # Validate
-        if datasets['15m'].empty or datasets['1h'].empty:
-            return None
-        return datasets
+    }
+
+# --- 1. DATA ENGINE (Advanced Resampling) ---
+def get_data(symbol):
+    """
+    Fetches granular data and resamples it to generate 5m, 15m, 30m, 1h, and 4h datasets.
+    """
+    try:
+        # Fetch 5 days of 5m data
+        df_5m = yf.download(symbol, period="5d", interval="5m", progress=False)
+        
+        # Fetch 1 month of 1h data
+        df_1h = yf.download(symbol, period="1mo", interval="1h", progress=False)
+        
+        # Fetch daily data for longer-term analysis
+        df_1d = yf.download(symbol, period="6mo", interval="1d", progress=False)
+        
+        if df_5m.empty or df_1h.empty: return None
+
+        # Clean MultiIndex
+        if isinstance(df_5m.columns, pd.MultiIndex): df_5m.columns = df_5m.columns.get_level_values(0)
+        if isinstance(df_1h.columns, pd.MultiIndex): df_1h.columns = df_1h.columns.get_level_values(0)
+        if isinstance(df_1d.columns, pd.MultiIndex): df_1d.columns = df_1d.columns.get_level_values(0)
+
+        data = {}
+        data['5m'] = df_5m
+        data['15m'] = df_5m.resample('15min').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
+        data['30m'] = df_5m.resample('30min').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
+        data['1h'] = df_1h
+        data['4h'] = df_1h.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
+        data['1d'] = df_1d
+        
+        return data
     except Exception as e:
-        st.error(f"Dataset error: {e}")
+        st.error(f"Data Error: {e}")
         return None
 
-# ══════════════════════════════════════════════
-# TECHNICAL INDICATORS ENGINE
-# ══════════════════════════════════════════════
-
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds a full suite of professional technical indicators."""
-    df = df.copy()
-    if len(df) < 50:
-        return df
-
-    c = df['Close']
-    h = df['High']
-    l = df['Low']
-    v = df['Volume']
-
-    # ── Trend EMAs ──────────────────────────────
-    for span in [5, 8, 9, 13, 21, 34, 50, 89, 200]:
-        df[f'EMA{span}'] = c.ewm(span=span, adjust=False).mean()
-
-    # ── Bollinger Bands ─────────────────────────
-    df['BB_Middle'] = c.rolling(20).mean()
-    bb_std = c.rolling(20).std()
-    df['BB_Upper'] = df['BB_Middle'] + 2 * bb_std
-    df['BB_Lower'] = df['BB_Middle'] - 2 * bb_std
-    df['BB_Width']  = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']
-    df['BB_Pct']    = (c - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'] + 1e-9)
-
-    # ── Keltner Channel ─────────────────────────
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    df['ATR']  = tr.rolling(14).mean()
-    df['ATR21']= tr.rolling(21).mean()
-    kc_mid = c.ewm(span=20, adjust=False).mean()
-    df['KC_Upper'] = kc_mid + 1.5 * df['ATR']
-    df['KC_Lower'] = kc_mid - 1.5 * df['ATR']
-
-    # ── Squeeze (Bollinger vs Keltner) ──────────
-    df['Squeeze'] = (df['BB_Upper'] < df['KC_Upper']) & (df['BB_Lower'] > df['KC_Lower'])
-
-    # ── RSI ─────────────────────────────────────
-    delta = c.diff()
-    gain  = delta.where(delta > 0, 0).rolling(14).mean()
-    loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    df['RSI'] = 100 - 100 / (1 + gain / (loss + 1e-9))
-    df['RSI_EMA'] = df['RSI'].ewm(span=9, adjust=False).mean()  # RSI signal line
-
-    # ── Stochastic RSI ──────────────────────────
-    rsi_min = df['RSI'].rolling(14).min()
-    rsi_max = df['RSI'].rolling(14).max()
-    df['StochRSI_K'] = 100 * (df['RSI'] - rsi_min) / (rsi_max - rsi_min + 1e-9)
-    df['StochRSI_D'] = df['StochRSI_K'].rolling(3).mean()
-
-    # ── Stochastic Oscillator ───────────────────
-    low14  = l.rolling(14).min()
-    high14 = h.rolling(14).max()
-    df['Stoch_K'] = 100 * (c - low14) / (high14 - low14 + 1e-9)
-    df['Stoch_D'] = df['Stoch_K'].rolling(3).mean()
-
-    # ── MACD ────────────────────────────────────
-    ema12 = c.ewm(span=12, adjust=False).mean()
-    ema26 = c.ewm(span=26, adjust=False).mean()
-    df['MACD']      = ema12 - ema26
-    df['MACD_Sig']  = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Sig']
-
-    # ── ADX / DI ────────────────────────────────
-    plus_dm  = h.diff().clip(lower=0)
-    minus_dm = (-l.diff()).clip(lower=0)
-    plus_dm[plus_dm < minus_dm]   = 0
-    minus_dm[minus_dm < plus_dm]  = 0
-    atr14    = tr.rolling(14).mean()
-    plus_di  = 100 * plus_dm.rolling(14).mean()  / (atr14 + 1e-9)
-    minus_di = 100 * minus_dm.rolling(14).mean() / (atr14 + 1e-9)
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9)
-    df['ADX']      = dx.rolling(14).mean()
-    df['Plus_DI']  = plus_di
-    df['Minus_DI'] = minus_di
-
-    # ── CCI (Commodity Channel Index) ───────────
-    typical = (h + l + c) / 3
-    df['CCI'] = (typical - typical.rolling(20).mean()) / (0.015 * typical.rolling(20).std() + 1e-9)
-
-    # ── Williams %R ─────────────────────────────
-    df['Williams_R'] = -100 * (h.rolling(14).max() - c) / (h.rolling(14).max() - l.rolling(14).min() + 1e-9)
-
-    # ── OBV & Volume ────────────────────────────
-    df['OBV']        = (np.sign(c.diff()) * v).fillna(0).cumsum()
-    df['OBV_EMA']    = df['OBV'].ewm(span=20, adjust=False).mean()
-    df['Volume_MA']  = v.rolling(20).mean()
-    df['Volume_Ratio'] = v / (df['Volume_MA'] + 1e-9)
-
-    # ── VWAP (Rolling daily) ────────────────────
-    df['VWAP'] = (typical * v).rolling(20).sum() / (v.rolling(20).sum() + 1e-9)
-
-    # ── Ichimoku Cloud ──────────────────────────
-    tenkan  = (h.rolling(9).max()  + l.rolling(9).min())  / 2
-    kijun   = (h.rolling(26).max() + l.rolling(26).min()) / 2
-    df['Ichimoku_Tenkan']  = tenkan
-    df['Ichimoku_Kijun']   = kijun
-    df['Ichimoku_SpanA']   = ((tenkan + kijun) / 2).shift(26)
-    df['Ichimoku_SpanB']   = ((h.rolling(52).max() + l.rolling(52).min()) / 2).shift(26)
-    df['Ichimoku_Chikou']  = c.shift(-26)
-
-    # ── Pivot Points (Classic) ──────────────────
-    ph = h.shift(1); pl = l.shift(1); pc = c.shift(1)
-    df['Pivot']  = (ph + pl + pc) / 3
-    df['R1']     = 2 * df['Pivot'] - pl
-    df['S1']     = 2 * df['Pivot'] - ph
-    df['R2']     = df['Pivot'] + (ph - pl)
-    df['S2']     = df['Pivot'] - (ph - pl)
-    df['R3']     = ph + 2 * (df['Pivot'] - pl)
-    df['S3']     = pl - 2 * (ph - df['Pivot'])
-
-    # ── Supertrend ─────────────────────────────
-    hl2 = (h + l) / 2
-    atr_st = df['ATR'].copy()
-    upper_band = hl2 + 3 * atr_st
-    lower_band = hl2 - 3 * atr_st
-    supertrend = pd.Series(np.nan, index=df.index)
-    direction  = pd.Series(1, index=df.index)
-    for i in range(1, len(df)):
-        prev_close = c.iloc[i - 1]
-        curr_close = c.iloc[i]
-        ub = upper_band.iloc[i]
-        lb = lower_band.iloc[i]
-        if direction.iloc[i - 1] == 1:
-            supertrend.iloc[i] = lb if curr_close > lb else ub
-            direction.iloc[i]  = 1  if curr_close > lb else -1
-        else:
-            supertrend.iloc[i] = ub if curr_close < ub else lb
-            direction.iloc[i]  = -1 if curr_close < ub else 1
-    df['Supertrend']     = supertrend
-    df['Supertrend_Dir'] = direction
-
-    # ── Rate of Change ──────────────────────────
-    df['ROC']  = c.pct_change(10) * 100
-    df['ROC3'] = c.pct_change(3)  * 100
-
-    # ── Money Flow Index ────────────────────────
-    tp_v = typical * v
-    pos_flow = tp_v.where(typical > typical.shift(1), 0).rolling(14).sum()
-    neg_flow = tp_v.where(typical < typical.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - 100 / (1 + pos_flow / (neg_flow + 1e-9))
-
-    # ── Elder Ray ────────────────────────────────
-    ema13 = c.ewm(span=13, adjust=False).mean()
-    df['Bull_Power'] = h - ema13
-    df['Bear_Power'] = l - ema13
-
+# --- 2. ADVANCED TECHNICAL INDICATORS ---
+def add_indicators(df):
+    if len(df) < 50: return df
+    
+    # Trend Indicators
+    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    
+    # Bollinger Bands
+    df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_Middle'] + (df['BB_Std'] * 2)
+    df['BB_Lower'] = df['BB_Middle'] - (df['BB_Std'] * 2)
+    
+    # Momentum - RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # Stochastic Oscillator
+    low_14 = df['Low'].rolling(window=14).min()
+    high_14 = df['High'].rolling(window=14).max()
+    df['Stoch_K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14 + 1e-9))
+    df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
+    
+    # MACD
+    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema12 - ema26
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['Signal']
+    
+    # ADX (Trend Strength)
+    plus_dm = df['High'].diff()
+    minus_dm = -df['Low'].diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    
+    tr = pd.concat([df['High'] - df['Low'], 
+                    abs(df['High'] - df['Close'].shift()), 
+                    abs(df['Low'] - df['Close'].shift())], axis=1).max(axis=1)
+    
+    atr = tr.rolling(window=14).mean()
+    plus_di = 100 * (plus_dm.rolling(window=14).mean() / atr)
+    minus_di = 100 * (minus_dm.rolling(window=14).mean() / atr)
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
+    df['ADX'] = dx.rolling(window=14).mean()
+    
+    # ATR for Stop Loss
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['ATR'] = true_range.rolling(14).mean()
+    
+    # Volume Analysis
+    df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
+    df['Volume_Ratio'] = df['Volume'] / (df['Volume_MA'] + 1e-9)
+    
+    # Price Rate of Change
+    df['ROC'] = ((df['Close'] - df['Close'].shift(10)) / df['Close'].shift(10)) * 100
+    
+    # On-Balance Volume
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    
     return df
 
-# ══════════════════════════════════════════════
-# PATTERN RECOGNITION ENGINE
-# ══════════════════════════════════════════════
+# --- 3. ADVANCED PATTERN RECOGNITION ---
+def identify_candle(df):
+    if len(df) < 3: return "Incomplete Data"
+    row = df.iloc[-1]
+    prev = df.iloc[-2]
+    prev2 = df.iloc[-3] if len(df) > 3 else prev
+    
+    body = abs(row['Open'] - row['Close'])
+    upper_wick = row['High'] - max(row['Open'], row['Close'])
+    lower_wick = min(row['Open'], row['Close']) - row['Low']
+    candle_range = row['High'] - row['Low']
+    
+    prev_body = abs(prev['Open'] - prev['Close'])
+    
+    pattern = "Normal"
+    
+    # Hammer / Hanging Man
+    if lower_wick > (body * 2) and upper_wick < (body * 0.5):
+        pattern = "🔨 Hammer (Bullish Reversal)"
+    
+    # Shooting Star
+    elif upper_wick > (body * 2) and lower_wick < (body * 0.5):
+        pattern = "🌠 Shooting Star (Bearish Reversal)"
+        
+    # Doji
+    elif body < (candle_range * 0.1):
+        pattern = "➕ Doji (Indecision)"
+    
+    # Bullish Engulfing
+    elif (row['Close'] > row['Open'] and prev['Close'] < prev['Open'] and 
+          row['Open'] <= prev['Close'] and row['Close'] > prev['Open']):
+        pattern = "🟢 Bullish Engulfing (Strong Buy)"
+    
+    # Bearish Engulfing
+    elif (row['Close'] < row['Open'] and prev['Close'] > prev['Open'] and 
+          row['Open'] >= prev['Close'] and row['Close'] < prev['Open']):
+        pattern = "🔴 Bearish Engulfing (Strong Sell)"
+    
+    # Morning Star (3-candle bullish reversal)
+    elif (prev2['Close'] < prev2['Open'] and abs(prev['Open'] - prev['Close']) < prev_body * 0.3 
+          and row['Close'] > row['Open'] and row['Close'] > (prev2['Open'] + prev2['Close'])/2):
+        pattern = "⭐ Morning Star (Major Bullish Reversal)"
+    
+    # Evening Star (3-candle bearish reversal)
+    elif (prev2['Close'] > prev2['Open'] and abs(prev['Open'] - prev['Close']) < prev_body * 0.3 
+          and row['Close'] < row['Open'] and row['Close'] < (prev2['Open'] + prev2['Close'])/2):
+        pattern = "🌙 Evening Star (Major Bearish Reversal)"
+        
+    return pattern
 
-def identify_candle_patterns(df: pd.DataFrame) -> list[dict]:
-    """
-    Detects 20+ candlestick patterns.
-    Returns list of detected patterns with bullish/bearish classification.
-    """
-    patterns = []
-    if len(df) < 5:
-        return patterns
-
-    r0 = df.iloc[-1]
-    r1 = df.iloc[-2]
-    r2 = df.iloc[-3]
-    r3 = df.iloc[-4] if len(df) > 4 else r2
-    r4 = df.iloc[-5] if len(df) > 5 else r3
-
-    o0, h0, l0, c0 = r0['Open'], r0['High'], r0['Low'], r0['Close']
-    o1, h1, l1, c1 = r1['Open'], r1['High'], r1['Low'], r1['Close']
-    o2, h2, l2, c2 = r2['Open'], r2['High'], r2['Low'], r2['Close']
-
-    body0 = abs(c0 - o0); wick_up0 = h0 - max(o0,c0); wick_dn0 = min(o0,c0) - l0
-    body1 = abs(c1 - o1); wick_up1 = h1 - max(o1,c1); wick_dn1 = min(o1,c1) - l1
-    rng0  = h0 - l0 + 1e-9
-
-    bull = c0 > o0; bear = c0 < o0
-    prev_bull = c1 > o1; prev_bear = c1 < o1
-
-    # ── 1-Candle Patterns ─────────────────────
-    if wick_dn0 > body0 * 2 and wick_up0 < body0 * 0.5:
-        patterns.append({'name': '🔨 Hammer', 'bias': 'bullish', 'strength': 'moderate'})
-
-    if wick_up0 > body0 * 2 and wick_dn0 < body0 * 0.5:
-        patterns.append({'name': '⭐ Shooting Star', 'bias': 'bearish', 'strength': 'moderate'})
-
-    if wick_dn0 > body0 * 2 and bear:
-        patterns.append({'name': '🪝 Hanging Man', 'bias': 'bearish', 'strength': 'moderate'})
-
-    if wick_up0 > body0 * 2 and bull:
-        patterns.append({'name': '💉 Inverted Hammer', 'bias': 'bullish', 'strength': 'moderate'})
-
-    if body0 < rng0 * 0.08:
-        patterns.append({'name': '➕ Doji', 'bias': 'neutral', 'strength': 'weak'})
-
-    if wick_up0 > rng0 * 0.45 and wick_dn0 > rng0 * 0.45 and body0 < rng0 * 0.1:
-        patterns.append({'name': '✚ Long-Legged Doji', 'bias': 'neutral', 'strength': 'moderate'})
-
-    if body0 > rng0 * 0.8 and bull:
-        patterns.append({'name': '💚 Marubozu Bullish', 'bias': 'bullish', 'strength': 'strong'})
-
-    if body0 > rng0 * 0.8 and bear:
-        patterns.append({'name': '🔴 Marubozu Bearish', 'bias': 'bearish', 'strength': 'strong'})
-
-    # ── 2-Candle Patterns ─────────────────────
-    if (bull and prev_bear and o0 <= c1 and c0 > o1 and body0 > body1):
-        patterns.append({'name': '🟢 Bullish Engulfing', 'bias': 'bullish', 'strength': 'strong'})
-
-    if (bear and prev_bull and o0 >= c1 and c0 < o1 and body0 > body1):
-        patterns.append({'name': '🔴 Bearish Engulfing', 'bias': 'bearish', 'strength': 'strong'})
-
-    if (prev_bear and bull and o0 > l1 and o0 < c1 and c0 > l1 and c0 < o1):
-        patterns.append({'name': '🌸 Bullish Harami', 'bias': 'bullish', 'strength': 'moderate'})
-
-    if (prev_bull and bear and o0 < h1 and o0 > c1 and c0 < h1 and c0 > o1):
-        patterns.append({'name': '🌼 Bearish Harami', 'bias': 'bearish', 'strength': 'moderate'})
-
-    if (prev_bear and bull and c0 > (o1 + c1) / 2):
-        patterns.append({'name': '🔵 Piercing Line', 'bias': 'bullish', 'strength': 'moderate'})
-
-    if (prev_bull and bear and c0 < (o1 + c1) / 2):
-        patterns.append({'name': '☁️ Dark Cloud Cover', 'bias': 'bearish', 'strength': 'moderate'})
-
-    if (prev_bull and abs(body0) < body1 * 0.3 and h0 < h1 and l0 > l1):
-        patterns.append({'name': '⚡ Bearish Harami Cross', 'bias': 'bearish', 'strength': 'moderate'})
-
-    # ── 3-Candle Patterns ─────────────────────
-    if (c2 < o2 and abs(c1 - o1) < abs(c2 - o2) * 0.3 and
-            bull and c0 > (o2 + c2) / 2):
-        patterns.append({'name': '🌅 Morning Star', 'bias': 'bullish', 'strength': 'very strong'})
-
-    if (c2 > o2 and abs(c1 - o1) < abs(c2 - o2) * 0.3 and
-            bear and c0 < (o2 + c2) / 2):
-        patterns.append({'name': '🌆 Evening Star', 'bias': 'bearish', 'strength': 'very strong'})
-
-    if bull and c1 > o1 and c2 > o2:
-        if c0 > c1 > c2 and o0 > o1 > o2:
-            patterns.append({'name': '🚀 Three White Soldiers', 'bias': 'bullish', 'strength': 'very strong'})
-
-    if bear and c1 < o1 and c2 < o2:
-        if c0 < c1 < c2 and o0 < o1 < o2:
-            patterns.append({'name': '💀 Three Black Crows', 'bias': 'bearish', 'strength': 'very strong'})
-
-    # ── 4+ Candle Patterns ────────────────────
-    # Three Inside Up
-    if (c2 < o2 and bull and
-            o0 > o1 and c0 > o1 and c0 > c2):
-        patterns.append({'name': '🌀 Three Inside Up', 'bias': 'bullish', 'strength': 'strong'})
-
-    if not patterns:
-        patterns.append({'name': '📊 No Pattern', 'bias': 'neutral', 'strength': 'n/a'})
-
-    return patterns
-
-# ══════════════════════════════════════════════
-# SIGNAL GENERATION ENGINE
-# ══════════════════════════════════════════════
-
-def generate_signal(df: pd.DataFrame, timeframe: str) -> dict | None:
-    """Generates a comprehensive trading signal with score."""
-    if len(df) < 200:
-        return None
-    df = add_indicators(df)
+# --- 4. ADVANCED TRADING SIGNAL ENGINE ---
+def generate_advanced_signal(df, timeframe_name):
+    if len(df) < 200: return None
     curr = df.iloc[-1]
     prev = df.iloc[-2]
-    prev2 = df.iloc[-3]
-
+    
+    signals = []
     score = 0
     max_score = 0
-    signals = []
-
-    # 1. EMA 200 Trend Filter (weight 3)
+    
+    # 1. TREND ANALYSIS (Weight: 3)
     max_score += 3
     if curr['Close'] > curr['EMA200']:
         score += 3
-        signals.append("✅ Above EMA200 (Bull Market)")
-    else:
+        signals.append("✅ Above 200 EMA (Strong Uptrend)")
+    elif curr['Close'] < curr['EMA200']:
         score -= 3
-        signals.append("⛔ Below EMA200 (Bear Market)")
-
-    # 2. Supertrend (weight 3)
-    max_score += 3
-    if 'Supertrend_Dir' in curr and not pd.isna(curr['Supertrend_Dir']):
-        if curr['Supertrend_Dir'] == 1:
-            score += 3
-            signals.append("✅ Supertrend Bullish")
-        else:
-            score -= 3
-            signals.append("⛔ Supertrend Bearish")
-
-    # 3. EMA Stack (weight 2)
+        signals.append("⛔ Below 200 EMA (Strong Downtrend)")
+    
+    # 2. EMA ALIGNMENT (Weight: 2)
     max_score += 2
     if curr['EMA9'] > curr['EMA21'] > curr['EMA50']:
         score += 2
-        signals.append("✅ Bullish EMA Stack (9>21>50)")
+        signals.append("✅ Bullish EMA Stack")
     elif curr['EMA9'] < curr['EMA21'] < curr['EMA50']:
         score -= 2
         signals.append("⛔ Bearish EMA Stack")
-
-    # 4. Ichimoku (weight 2)
+    
+    # 3. RSI MOMENTUM (Weight: 2)
     max_score += 2
-    if 'Ichimoku_SpanA' in curr and not pd.isna(curr.get('Ichimoku_SpanA', np.nan)):
-        cloud_top = max(curr['Ichimoku_SpanA'], curr['Ichimoku_SpanB'])
-        cloud_bot = min(curr['Ichimoku_SpanA'], curr['Ichimoku_SpanB'])
-        if curr['Close'] > cloud_top:
-            score += 2
-            signals.append("✅ Price above Ichimoku Cloud")
-        elif curr['Close'] < cloud_bot:
-            score -= 2
-            signals.append("⛔ Price below Ichimoku Cloud")
-        if curr['Ichimoku_Tenkan'] > curr['Ichimoku_Kijun']:
-            score += 1
-            signals.append("✅ TK Cross Bullish")
-        else:
-            score -= 1
-            signals.append("⛔ TK Cross Bearish")
-        max_score += 1
-
-    # 5. RSI (weight 2)
+    if curr['RSI'] > 70:
+        score -= 2
+        signals.append("⚠️ RSI Overbought (>70)")
+    elif curr['RSI'] > 50:
+        score += 2
+        signals.append("✅ RSI Bullish (>50)")
+    elif curr['RSI'] < 30:
+        score += 1
+        signals.append("💎 RSI Oversold (<30) - Potential Reversal")
+    else:
+        score -= 1
+        signals.append("⛔ RSI Bearish (<50)")
+    
+    # 4. MACD CROSSOVER (Weight: 2)
     max_score += 2
-    rsi = curr['RSI']
-    if rsi > 70:
-        score -= 2; signals.append(f"⚠️ RSI Overbought ({rsi:.1f})")
-    elif rsi > 55:
-        score += 2; signals.append(f"✅ RSI Bullish ({rsi:.1f})")
-    elif rsi > 45:
-        score += 1; signals.append(f"🟡 RSI Neutral ({rsi:.1f})")
-    elif rsi > 30:
-        score -= 1; signals.append(f"⛔ RSI Bearish ({rsi:.1f})")
+    if curr['MACD'] > curr['Signal'] and prev['MACD'] <= prev['Signal']:
+        score += 2
+        signals.append("🚀 MACD Bullish Crossover (FRESH)")
+    elif curr['MACD'] > curr['Signal']:
+        score += 1
+        signals.append("✅ MACD Above Signal")
+    elif curr['MACD'] < curr['Signal'] and prev['MACD'] >= prev['Signal']:
+        score -= 2
+        signals.append("🔻 MACD Bearish Crossover (FRESH)")
     else:
-        score += 1; signals.append(f"💎 RSI Oversold ({rsi:.1f}) – Reversal Zone")
-
-    # 6. Stochastic RSI (weight 2)
-    max_score += 2
-    sk = curr['StochRSI_K']
-    sd = curr['StochRSI_D']
-    if sk > 80:
-        signals.append(f"⚠️ StochRSI Overbought ({sk:.0f})")
-    elif sk < 20:
-        score += 2; signals.append(f"💎 StochRSI Oversold ({sk:.0f})")
-    elif sk > sd:
-        score += 2; signals.append(f"✅ StochRSI Bullish ({sk:.0f})")
+        score -= 1
+        signals.append("⛔ MACD Below Signal")
+    
+    # 5. STOCHASTIC (Weight: 1)
+    max_score += 1
+    if curr['Stoch_K'] > 80:
+        signals.append("⚠️ Stochastic Overbought")
+    elif curr['Stoch_K'] < 20:
+        score += 1
+        signals.append("💎 Stochastic Oversold")
+    elif curr['Stoch_K'] > curr['Stoch_D']:
+        signals.append("✅ Stochastic Bullish")
+    
+    # 6. BOLLINGER BANDS (Weight: 1)
+    max_score += 1
+    if curr['Close'] < curr['BB_Lower']:
+        score += 1
+        signals.append("💎 Price Below BB Lower (Oversold)")
+    elif curr['Close'] > curr['BB_Upper']:
+        score -= 1
+        signals.append("⚠️ Price Above BB Upper (Overbought)")
+    
+    # 7. ADX TREND STRENGTH (Weight: 1)
+    max_score += 1
+    if curr['ADX'] > 25:
+        signals.append(f"✅ Strong Trend (ADX: {curr['ADX']:.1f})")
+        score += 1
     else:
-        score -= 1; signals.append(f"⛔ StochRSI Bearish ({sk:.0f})")
-
-    # 7. MACD (weight 2)
-    max_score += 2
-    if curr['MACD'] > curr['MACD_Sig'] and prev['MACD'] <= prev['MACD_Sig']:
-        score += 2; signals.append("🚀 MACD Bullish Crossover (FRESH)")
-    elif curr['MACD'] > curr['MACD_Sig']:
-        score += 1; signals.append("✅ MACD Above Signal")
-    elif curr['MACD'] < curr['MACD_Sig'] and prev['MACD'] >= prev['MACD_Sig']:
-        score -= 2; signals.append("🔻 MACD Bearish Crossover (FRESH)")
+        signals.append(f"⚠️ Weak Trend (ADX: {curr['ADX']:.1f})")
+    
+    # 8. VOLUME CONFIRMATION (Weight: 1)
+    max_score += 1
+    if curr['Volume_Ratio'] > 1.5:
+        score += 1
+        signals.append("✅ High Volume Confirmation")
+    elif curr['Volume_Ratio'] < 0.5:
+        signals.append("⚠️ Low Volume (Weak Move)")
+    
+    # Calculate normalized score (0-100)
+    normalized_score = ((score + max_score) / (2 * max_score)) * 100
+    
+    # Determine signal strength
+    if normalized_score >= 75:
+        signal_type = "🟢 STRONG BUY"
+        confidence = "Very High"
+    elif normalized_score >= 60:
+        signal_type = "🟢 BUY"
+        confidence = "High"
+    elif normalized_score >= 45:
+        signal_type = "🟡 NEUTRAL/HOLD"
+        confidence = "Medium"
+    elif normalized_score >= 30:
+        signal_type = "🔴 SELL"
+        confidence = "High"
     else:
-        score -= 1; signals.append("⛔ MACD Below Signal")
-
-    # MACD Histogram momentum
-    if curr['MACD_Hist'] > prev['MACD_Hist'] > prev2['MACD_Hist']:
-        score += 1; signals.append("✅ MACD Histogram Expanding Bullish")
-        max_score += 1
-    elif curr['MACD_Hist'] < prev['MACD_Hist'] < prev2['MACD_Hist']:
-        score -= 1; signals.append("⛔ MACD Histogram Expanding Bearish")
-        max_score += 1
-
-    # 8. ADX Trend Strength (weight 1)
-    max_score += 1
-    adx = curr['ADX']
-    if adx > 30:
-        score += 1; signals.append(f"✅ Very Strong Trend (ADX {adx:.1f})")
-    elif adx > 20:
-        signals.append(f"🟡 Moderate Trend (ADX {adx:.1f})")
-    else:
-        score -= 1; signals.append(f"⚠️ Weak Trend – Choppy (ADX {adx:.1f})")
-
-    # DI cross
-    if curr['Plus_DI'] > curr['Minus_DI'] and prev['Plus_DI'] <= prev['Minus_DI']:
-        score += 1; signals.append("✅ DI+ Cross Above DI- (FRESH)"); max_score += 1
-    elif curr['Minus_DI'] > curr['Plus_DI'] and prev['Minus_DI'] <= prev['Plus_DI']:
-        score -= 1; signals.append("⛔ DI- Cross Above DI+ (FRESH)"); max_score += 1
-
-    # 9. Bollinger Bands (weight 1)
-    max_score += 1
-    bp = curr['BB_Pct']
-    if bp < 0.05:
-        score += 1; signals.append("💎 Price at/below BB Lower (Oversold)")
-    elif bp > 0.95:
-        score -= 1; signals.append("⚠️ Price at/above BB Upper (Overbought)")
-    elif 0.4 < bp < 0.6:
-        signals.append("🟡 Price near BB Midline")
-
-    # Squeeze
-    if curr.get('Squeeze', False):
-        signals.append("🔵 BB Squeeze Active – Breakout Imminent")
-
-    # 10. CCI (weight 1)
-    max_score += 1
-    cci = curr['CCI']
-    if cci > 100:
-        score -= 1; signals.append(f"⚠️ CCI Overbought ({cci:.0f})")
-    elif cci < -100:
-        score += 1; signals.append(f"💎 CCI Oversold ({cci:.0f})")
-    elif cci > 0:
-        signals.append(f"✅ CCI Positive ({cci:.0f})")
-
-    # 11. Williams %R (weight 1)
-    max_score += 1
-    wr = curr['Williams_R']
-    if wr < -80:
-        score += 1; signals.append(f"💎 Williams %R Oversold ({wr:.1f})")
-    elif wr > -20:
-        score -= 1; signals.append(f"⚠️ Williams %R Overbought ({wr:.1f})")
-
-    # 12. MFI (weight 1)
-    max_score += 1
-    mfi = curr['MFI']
-    if mfi < 20:
-        score += 1; signals.append(f"💎 MFI Oversold ({mfi:.0f}) – Smart money buying")
-    elif mfi > 80:
-        score -= 1; signals.append(f"⚠️ MFI Overbought ({mfi:.0f})")
-
-    # 13. Volume (weight 1)
-    max_score += 1
-    vr = curr['Volume_Ratio']
-    if vr > 2:
-        score += 1; signals.append(f"✅ Volume Surge ({vr:.1f}x avg)")
-    elif vr > 1.3:
-        signals.append(f"✅ Above Average Volume ({vr:.1f}x)")
-    elif vr < 0.5:
-        score -= 1; signals.append(f"⚠️ Low Volume ({vr:.1f}x avg)")
-
-    # 14. OBV Divergence (weight 1)
-    max_score += 1
-    if 'OBV_EMA' in curr:
-        if curr['OBV'] > curr['OBV_EMA']:
-            score += 1; signals.append("✅ OBV above OBV-EMA (Bullish)")
-        else:
-            score -= 1; signals.append("⛔ OBV below OBV-EMA (Bearish)")
-
-    # 15. Elder Ray (weight 1)
-    max_score += 1
-    if curr['Bull_Power'] > 0 and curr['Bear_Power'] > 0:
-        score += 1; signals.append("✅ Elder Ray: Strong Bull Power")
-    elif curr['Bull_Power'] < 0 and curr['Bear_Power'] < 0:
-        score -= 1; signals.append("⛔ Elder Ray: Strong Bear Power")
-
-    # 16. VWAP (weight 1)
-    max_score += 1
-    if curr['Close'] > curr['VWAP']:
-        score += 1; signals.append("✅ Price above VWAP")
-    else:
-        score -= 1; signals.append("⛔ Price below VWAP")
-
-    # Normalise → 0‒100
-    normalised = ((score + max_score) / (2 * max_score)) * 100
-
-    if normalised >= 78:
-        sig_label, confidence = "🟢 STRONG BUY", "Very High"
-    elif normalised >= 63:
-        sig_label, confidence = "🟢 BUY", "High"
-    elif normalised >= 50:
-        sig_label, confidence = "🟡 HOLD/NEUTRAL", "Medium"
-    elif normalised >= 37:
-        sig_label, confidence = "🔴 SELL", "High"
-    else:
-        sig_label, confidence = "🔴 STRONG SELL", "Very High"
-
+        signal_type = "🔴 STRONG SELL"
+        confidence = "Very High"
+    
     return {
-        'Signal': sig_label,
-        'Confidence': confidence,
-        'Score': round(normalised, 1),
-        'RSI': round(rsi, 1),
-        'MACD': round(curr['MACD'], 6),
-        'ADX': round(adx, 1),
-        'ATR': curr['ATR'],
-        'Price': curr['Close'],
-        'Signals': signals,
-        'BB_Pct': round(curr['BB_Pct'] * 100, 1),
-        'Volume_Ratio': round(vr, 2),
-        'Supertrend_Dir': curr.get('Supertrend_Dir', 0),
+        "Signal": signal_type,
+        "Confidence": confidence,
+        "Score": round(normalized_score, 1),
+        "RSI": round(curr['RSI'], 1),
+        "MACD": round(curr['MACD'], 4),
+        "ADX": round(curr['ADX'], 1),
+        "Stoch": round(curr['Stoch_K'], 1),
+        "ATR": curr['ATR'],
+        "Price": curr['Close'],
+        "Signals": signals
     }
 
-# ══════════════════════════════════════════════
-# 15-MINUTE SCALPING ENGINE (PRIMARY)
-# ══════════════════════════════════════════════
-
-def generate_15m_scalp_signal(df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
+# --- 5. ADVANCED PREDICTION ENGINE WITH ML TECHNIQUES ---
+def predict_price_movement(df, timeframe):
     """
-    Dedicated 15m scalping engine with higher-timeframe confluence filter.
-    Uses 15m as the primary entry timeframe confirmed by 1h direction.
+    Enhanced prediction using multiple methods with machine learning principles:
+    1. Weighted Linear Regression (time-decay weights)
+    2. Momentum-adjusted EMA prediction
+    3. Mean Reversion (Bollinger Bands + RSI)
+    4. Volume-Weighted Price Analysis
+    5. Support/Resistance Levels
+    6. Trend Strength Adjustment (ADX)
     """
-    df15 = add_indicators(df_15m.copy())
-    df1h = add_indicators(df_1h.copy())
-
-    if len(df15) < 50 or len(df1h) < 50:
-        return {'signal': 'INSUFFICIENT DATA', 'score': 0, 'reasons': []}
-
-    c15 = df15.iloc[-1];  p15 = df15.iloc[-2]
-    c1h = df1h.iloc[-1]
-
-    score = 0; reasons = []
-
-    # ── 1h TREND FILTER (must agree, weight 30) ─
-    h_bull = c1h['Close'] > c1h['EMA50'] and c1h['EMA21'] > c1h['EMA50']
-    h_bear = c1h['Close'] < c1h['EMA50'] and c1h['EMA21'] < c1h['EMA50']
-    if h_bull:
-        score += 30; reasons.append("✅ 1H Trend Filter: BULLISH (trading with trend)")
-    elif h_bear:
-        score -= 30; reasons.append("❌ 1H Trend Filter: BEARISH (trading with trend)")
-    else:
-        reasons.append("⚠️ 1H Trend: MIXED (counter-trend risk)")
-
-    # ── 15m Supertrend (weight 20) ──────────────
-    if c15.get('Supertrend_Dir', 0) == 1:
-        score += 20; reasons.append("✅ 15m Supertrend: BULLISH")
-    else:
-        score -= 20; reasons.append("❌ 15m Supertrend: BEARISH")
-
-    # ── 15m EMA 8 / 21 / 34 Ribbon (weight 15) ──
-    if c15['EMA8'] > c15['EMA21'] > c15['EMA34']:
-        score += 15; reasons.append("✅ 15m EMA Ribbon Bullish (8>21>34)")
-    elif c15['EMA8'] < c15['EMA21'] < c15['EMA34']:
-        score -= 15; reasons.append("❌ 15m EMA Ribbon Bearish")
-
-    # ── Price vs VWAP (weight 10) ────────────────
-    if c15['Close'] > c15['VWAP']:
-        score += 10; reasons.append("✅ 15m Price above VWAP")
-    else:
-        score -= 10; reasons.append("❌ 15m Price below VWAP")
-
-    # ── Stochastic RSI cross (weight 10) ─────────
-    if c15['StochRSI_K'] > c15['StochRSI_D'] and p15['StochRSI_K'] <= p15['StochRSI_D']:
-        if c15['StochRSI_K'] < 80:
-            score += 10; reasons.append("🚀 15m StochRSI Bullish Cross (FRESH)")
-    elif c15['StochRSI_K'] < c15['StochRSI_D'] and p15['StochRSI_K'] >= p15['StochRSI_D']:
-        if c15['StochRSI_K'] > 20:
-            score -= 10; reasons.append("🔻 15m StochRSI Bearish Cross (FRESH)")
-
-    # ── RSI zone filter (weight 5) ────────────────
-    rsi = c15['RSI']
-    if 40 < rsi < 65:
-        score += 5; reasons.append(f"✅ 15m RSI in trade zone ({rsi:.0f})")
-    elif rsi > 75 or rsi < 25:
-        score -= 5; reasons.append(f"⚠️ 15m RSI extreme ({rsi:.0f}) – expect reversal")
-
-    # ── Volume spike (weight 5) ──────────────────
-    if c15['Volume_Ratio'] > 1.5:
-        score += 5; reasons.append(f"✅ Volume spike ({c15['Volume_Ratio']:.1f}x avg)")
-    elif c15['Volume_Ratio'] < 0.6:
-        score -= 5; reasons.append(f"⚠️ Low volume ({c15['Volume_Ratio']:.1f}x avg) – weak move")
-
-    # ── Bollinger Squeeze breakout (weight 5) ────
-    if c15.get('Squeeze', False):
-        if c15['MACD_Hist'] > 0:
-            score += 5; reasons.append("🔵 BB Squeeze Breakout UP")
-        else:
-            score -= 5; reasons.append("🔵 BB Squeeze Breakout DOWN")
-
-    # ── Convert to 0-100 ─────────────────────────
-    norm = max(0, min(100, (score + 100) / 2))
-
-    if norm >= 78:
-        sig, conf = "STRONG BUY", "Very High"
-    elif norm >= 62:
-        sig, conf = "BUY", "High"
-    elif norm >= 45:
-        sig, conf = "NEUTRAL", "Medium"
-    elif norm >= 30:
-        sig, conf = "SELL", "High"
-    else:
-        sig, conf = "STRONG SELL", "Very High"
-
-    patterns = identify_candle_patterns(df15)
-    pattern_str = patterns[0]['name'] if patterns else "No Pattern"
-
-    # Entry / exit levels
-    atr = c15['ATR']
-    price = c15['Close']
-    sl_mult = 1.5; tp_mult = 2.5  # Scalp ATR multipliers
-    if "BUY" in sig:
-        sl = price - atr * sl_mult; tp = price + atr * tp_mult
-    else:
-        sl = price + atr * sl_mult; tp = price - atr * tp_mult
-
-    return {
-        'signal': sig, 'confidence': conf,
-        'score': round(norm, 1), 'reasons': reasons,
-        'pattern': pattern_str, 'price': price,
-        'sl': sl, 'tp': tp, 'atr': atr,
-        'rsi': round(rsi, 1),
-        'stoch_k': round(c15['StochRSI_K'], 1),
-    }
-
-# ══════════════════════════════════════════════
-# MASTER SIGNAL CALCULATOR
-# ══════════════════════════════════════════════
-
-def calc_master_signal(datasets: dict, scalp_sig: dict) -> dict:
-    """Combines all timeframe signals into master signals for Scalp/Intra/Swing."""
-    masters = {}
-
-    # ── Scalp (15m primary) ─────────────────────
-    masters['scalp'] = {
-        'signal': scalp_sig.get('signal', 'NEUTRAL'),
-        'score':  scalp_sig.get('score', 50),
-        'conf':   scalp_sig.get('confidence', 'Low'),
-    }
-
-    # ── Intraday (30m + 1h) ─────────────────────
-    sig30 = generate_signal(add_indicators(datasets['30m']), '30m')
-    sig1h = generate_signal(add_indicators(datasets['1h']),  '1h')
-    if sig30 and sig1h:
-        intra_score = (sig30['Score'] * 0.4 + sig1h['Score'] * 0.6)
-        if intra_score >= 78:
-            i_sig = "STRONG BUY"
-        elif intra_score >= 63:
-            i_sig = "BUY"
-        elif intra_score >= 45:
-            i_sig = "NEUTRAL"
-        elif intra_score >= 37:
-            i_sig = "SELL"
-        else:
-            i_sig = "STRONG SELL"
-        masters['intraday'] = {'signal': i_sig, 'score': round(intra_score, 1), 'conf': sig1h['Confidence']}
-    else:
-        masters['intraday'] = {'signal': 'NEUTRAL', 'score': 50, 'conf': 'Low'}
-
-    # ── Swing (4h + Daily) ───────────────────────
-    sig4h = generate_signal(add_indicators(datasets['4h']), '4h')
-    sig1d = generate_signal(add_indicators(datasets['1d']), '1d')
-    if sig4h and sig1d:
-        swing_score = (sig4h['Score'] * 0.5 + sig1d['Score'] * 0.5)
-        if swing_score >= 78:
-            s_sig = "STRONG BUY"
-        elif swing_score >= 63:
-            s_sig = "BUY"
-        elif swing_score >= 45:
-            s_sig = "NEUTRAL"
-        elif swing_score >= 37:
-            s_sig = "SELL"
-        else:
-            s_sig = "STRONG SELL"
-        masters['swing'] = {'signal': s_sig, 'score': round(swing_score, 1), 'conf': sig4h['Confidence']}
-    else:
-        masters['swing'] = {'signal': 'NEUTRAL', 'score': 50, 'conf': 'Low'}
-
-    return masters
-
-# ══════════════════════════════════════════════
-# CONFLICT DETECTION
-# ══════════════════════════════════════════════
-
-def detect_conflicts(datasets: dict, all_sigs: dict) -> dict:
-    """Detects inter-indicator and timeframe conflicts."""
-    conflicts = []; warnings = []
-    risk = 0
-
-    sig15 = all_sigs.get('15m')
-    sig1h = all_sigs.get('1h')
-    sig4h = all_sigs.get('4h')
-
-    # Price momentum (15m)
-    df15 = datasets['15m']
-    if len(df15) >= 3:
-        mom15 = (df15['Close'].iloc[-1] / df15['Close'].iloc[-3] - 1) * 100
-    else:
-        mom15 = 0
-
-    # Timeframe conflict
-    if sig15 and sig1h:
-        if "BUY" in sig15['Signal'] and "SELL" in sig1h['Signal']:
-            conflicts.append({'severity': 'HIGH',
-                'msg': "⚠️ 15m BUY vs 1H SELL – Counter-trend scalp only",
-                'action': "Use tight stop, 50% size max"})
-            risk += 20
-        if "SELL" in sig15['Signal'] and "BUY" in sig1h['Signal']:
-            conflicts.append({'severity': 'MEDIUM',
-                'msg': "⚠️ 15m SELL vs 1H BUY – Pullback only, not reversal",
-                'action': "Do not short aggressively"})
-            risk += 10
-
-    # Price vs signal conflict
-    if sig15 and "BUY" in sig15['Signal'] and mom15 < -0.5:
-        conflicts.append({'severity': 'HIGH',
-            'msg': f"⚠️ BUY signal but price fell {mom15:.2f}% (last 15m)",
-            'action': "Wait for stabilisation"})
-        risk += 20
-
-    if sig15 and "SELL" in sig15['Signal'] and mom15 > 0.5:
-        conflicts.append({'severity': 'HIGH',
-            'msg': f"⚠️ SELL signal but price rose +{mom15:.2f}% (last 15m)",
-            'action': "Wait for rejection confirmation"})
-        risk += 20
-
-    # RSI divergence
-    if sig15:
-        rsi = sig15['RSI']
-        if "BUY" in sig15['Signal'] and rsi > 72:
-            warnings.append({'msg': f"⚠️ BUY but RSI overbought ({rsi:.0f})", 'action': "Tight SL"})
-            risk += 10
-        if "SELL" in sig15['Signal'] and rsi < 28:
-            warnings.append({'msg': f"⚠️ SELL but RSI oversold ({rsi:.0f})", 'action': "Bounce likely"})
-            risk += 10
-
-    # ADX / Trend strength
-    if sig15 and sig15['ADX'] < 18 and ("STRONG" in sig15['Signal']):
-        warnings.append({'msg': f"⚠️ STRONG signal on weak trend (ADX {sig15['ADX']:.0f})",
-                          'action': "Reduce size 50%"}); risk += 8
-
-    # Assessment
-    if risk >= 35:
-        assessment = "🚫 HIGH RISK – Skip or micro-size"
-    elif risk >= 20:
-        assessment = "⚠️ MEDIUM RISK – Reduce size"
-    elif risk > 0:
-        assessment = "💛 LOW RISK – Trade with caution"
-    else:
-        assessment = "✅ CLEAN SETUP – Full size allowed"
-
-    return {
-        'conflicts': conflicts, 'warnings': warnings,
-        'risk_score': risk, 'assessment': assessment,
-        'momentum_15m': round(mom15, 3),
-    }
-
-# ══════════════════════════════════════════════
-# VOLUME PROFILE
-# ══════════════════════════════════════════════
-
-def volume_profile(df: pd.DataFrame, bins: int = 24) -> dict | None:
-    if len(df) < 30:
+    if len(df) < 50:
         return None
-    price_min = df['Low'].min(); price_max = df['High'].max()
-    edges = np.linspace(price_min, price_max, bins)
-    vol_at_price = np.zeros(bins - 1)
-    for _, row in df.iterrows():
-        lo, hi, vol = row['Low'], row['High'], row['Volume']
-        for j in range(bins - 1):
-            if edges[j] <= hi and edges[j+1] >= lo:
-                vol_at_price[j] += vol / max(1, bins - 1)
-    poc_idx = np.argmax(vol_at_price)
-    poc = (edges[poc_idx] + edges[poc_idx+1]) / 2
-    total = vol_at_price.sum()
-    sorted_idx = np.argsort(vol_at_price)[::-1]
-    cumvol = 0; va_idx = []
-    for i in sorted_idx:
-        cumvol += vol_at_price[i]; va_idx.append(i)
-        if cumvol >= total * 0.70: break
-    va_idx.sort()
-    return {'poc': poc, 'va_low': edges[va_idx[0]], 'va_high': edges[va_idx[-1]+1],
-            'bins': edges, 'volume': vol_at_price}
+    
+    curr_price = df['Close'].iloc[-1]
+    predictions = {}
+    weights = {}
+    
+    # --- METHOD 1: Weighted Linear Regression (Recent data more important) ---
+    recent_data = df['Close'].tail(30).values
+    x = np.arange(len(recent_data))
+    # Apply exponential weights (recent data weighted higher)
+    time_weights = np.exp(x / len(recent_data))
+    
+    # Weighted regression
+    weighted_mean_x = np.average(x, weights=time_weights)
+    weighted_mean_y = np.average(recent_data, weights=time_weights)
+    
+    numerator = np.sum(time_weights * (x - weighted_mean_x) * (recent_data - weighted_mean_y))
+    denominator = np.sum(time_weights * (x - weighted_mean_x) ** 2)
+    
+    if denominator != 0:
+        slope = numerator / denominator
+        intercept = weighted_mean_y - slope * weighted_mean_x
+        predictions['Weighted_Linear'] = slope * len(recent_data) + intercept
+        
+        # Calculate R-squared for confidence
+        y_pred = slope * x + intercept
+        ss_res = np.sum((recent_data - y_pred) ** 2)
+        ss_tot = np.sum((recent_data - np.mean(recent_data)) ** 2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+        weights['Weighted_Linear'] = abs(r_squared) * 2
+    else:
+        predictions['Weighted_Linear'] = curr_price
+        weights['Weighted_Linear'] = 0.5
+    
+    # --- METHOD 2: Momentum-Adjusted EMA Prediction ---
+    ema9 = df['EMA9'].iloc[-1]
+    ema21 = df['EMA21'].iloc[-1]
+    ema50 = df['EMA50'].iloc[-1]
+    
+    # Calculate momentum from multiple EMAs
+    short_momentum = ema9 - ema21
+    medium_momentum = ema21 - ema50
+    
+    # Momentum strength (0-1 scale)
+    momentum_strength = min(abs(short_momentum / curr_price), 0.02)  # Cap at 2%
+    
+    # Predict based on aligned momentum
+    if short_momentum > 0 and medium_momentum > 0:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 1.5)
+        weights['Momentum_EMA'] = 2.0
+    elif short_momentum < 0 and medium_momentum < 0:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 1.5)
+        weights['Momentum_EMA'] = 2.0
+    else:
+        predictions['Momentum_EMA'] = curr_price + (short_momentum * 0.5)
+        weights['Momentum_EMA'] = 1.0
+    
+    # --- METHOD 3: Mean Reversion with RSI Confirmation ---
+    bb_upper = df['BB_Upper'].iloc[-1]
+    bb_middle = df['BB_Middle'].iloc[-1]
+    bb_lower = df['BB_Lower'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    
+    # Calculate distance from bands
+    if curr_price < bb_lower and rsi < 35:
+        # Oversold - expect reversion up
+        predictions['Mean_Reversion'] = bb_middle
+        weights['Mean_Reversion'] = 2.5  # High confidence in reversion
+    elif curr_price > bb_upper and rsi > 65:
+        # Overbought - expect reversion down
+        predictions['Mean_Reversion'] = bb_middle
+        weights['Mean_Reversion'] = 2.5
+    else:
+        # Not at extremes
+        predictions['Mean_Reversion'] = curr_price
+        weights['Mean_Reversion'] = 0.8
+    
+    # --- METHOD 4: Volume-Weighted Price Projection ---
+    recent_volume = df['Volume'].tail(10).values
+    recent_prices = df['Close'].tail(10).values
+    
+    if recent_volume.sum() > 0:
+        vwap_recent = np.sum(recent_prices * recent_volume) / recent_volume.sum()
+        volume_trend = recent_volume[-3:].mean() / recent_volume[:-3].mean()
+        
+        # If volume increasing, price likely to continue direction
+        if volume_trend > 1.2:
+            direction = 1 if curr_price > vwap_recent else -1
+            predictions['Volume_Weighted'] = curr_price + (direction * abs(curr_price - vwap_recent) * 0.3)
+            weights['Volume_Weighted'] = 1.5
+        else:
+            predictions['Volume_Weighted'] = vwap_recent
+            weights['Volume_Weighted'] = 1.0
+    else:
+        predictions['Volume_Weighted'] = curr_price
+        weights['Volume_Weighted'] = 0.5
+    
+    # --- METHOD 5: Support/Resistance Levels ---
+    # Find recent swing highs and lows
+    window = 20
+    recent_highs = df['High'].tail(window)
+    recent_lows = df['Low'].tail(window)
+    
+    resistance = recent_highs.quantile(0.95)
+    support = recent_lows.quantile(0.05)
+    
+    # Predict based on proximity to S/R
+    distance_to_resistance = (resistance - curr_price) / curr_price
+    distance_to_support = (curr_price - support) / curr_price
+    
+    if distance_to_resistance < 0.01:  # Within 1% of resistance
+        predictions['SR_Level'] = curr_price - (curr_price * 0.005)  # Slight pullback
+        weights['SR_Level'] = 1.5
+    elif distance_to_support < 0.01:  # Within 1% of support
+        predictions['SR_Level'] = curr_price + (curr_price * 0.005)  # Slight bounce
+        weights['SR_Level'] = 1.5
+    else:
+        predictions['SR_Level'] = curr_price
+        weights['SR_Level'] = 1.0
+    
+    # --- METHOD 6: Trend Strength (ADX) Adjustment ---
+    adx = df['ADX'].iloc[-1]
+    
+    # Strong trend (ADX > 25) - trend continuation more likely
+    if adx > 25:
+        trend_direction = 1 if ema9 > ema21 else -1
+        predictions['Trend_ADX'] = curr_price + (trend_direction * curr_price * 0.01)
+        weights['Trend_ADX'] = (adx / 25)  # Scale weight by ADX strength
+    else:
+        predictions['Trend_ADX'] = curr_price
+        weights['Trend_ADX'] = 0.5
+    
+    # --- ENSEMBLE PREDICTION (Weighted Average) ---
+    total_weight = sum(weights.values())
+    weighted_prediction = sum(pred * weights[key] for key, pred in predictions.items()) / total_weight
+    
+    # Calculate prediction metrics
+    movement_pct = ((weighted_prediction - curr_price) / curr_price) * 100
+    
+    # ATR-based range
+    atr = df['ATR'].iloc[-1]
+    upper_range = curr_price + (atr * 1.5)
+    lower_range = curr_price - (atr * 1.5)
+    
+    # Overall confidence (normalized)
+    base_confidence = (total_weight / len(predictions)) * 100
+    
+    # Adjust confidence based on volatility
+    volatility_factor = min(atr / curr_price, 0.1) * 100
+    adjusted_confidence = max(min(base_confidence - volatility_factor, 95), 30)
+    
+    return {
+        'current': curr_price,
+        'predicted': weighted_prediction,
+        'movement_pct': movement_pct,
+        'upper_range': upper_range,
+        'lower_range': lower_range,
+        'confidence': adjusted_confidence,
+        'direction': '📈 UP' if movement_pct > 0 else '📉 DOWN',
+        'strength': 'Strong' if abs(movement_pct) > 1 else 'Moderate' if abs(movement_pct) > 0.3 else 'Weak',
+        'method_predictions': predictions,
+        'method_weights': weights,
+        'adx': adx,
+        'rsi': rsi
+    }
 
-# ══════════════════════════════════════════════
-# ORDER FLOW DETECTION
-# ══════════════════════════════════════════════
+# --- 6. DIVERGENCE & CONFLICT DETECTION ---
+def detect_signal_conflicts(data_sets, analysis_results):
+    """
+    Detects when indicators say one thing but price action says another.
+    This is THE KEY to avoiding false signals!
+    """
+    conflicts = []
+    warnings = []
+    
+    # Get recent price action
+    df_5m = data_sets['5m']
+    df_1h = data_sets['1h']
+    
+    current_price = df_5m['Close'].iloc[-1]
+    price_5min_ago = df_5m['Close'].iloc[-2] if len(df_5m) > 1 else current_price
+    price_30min_ago = df_5m['Close'].iloc[-7] if len(df_5m) > 7 else current_price
+    price_1h_ago = df_1h['Close'].iloc[-2] if len(df_1h) > 1 else current_price
+    
+    # Calculate REAL-TIME price momentum
+    momentum_5m = ((current_price - price_5min_ago) / price_5min_ago) * 100
+    momentum_30m = ((current_price - price_30min_ago) / price_30min_ago) * 100
+    momentum_1h = ((current_price - price_1h_ago) / price_1h_ago) * 100
+    
+    # Check for divergences
+    sig_5m = analysis_results.get('5m')
+    sig_30m = analysis_results.get('30m')
+    sig_1h = analysis_results.get('1h')
+    
+    # CONFLICT 1: Signal says BUY but price is actively falling
+    if sig_5m and "BUY" in sig_5m['Signal']:
+        if momentum_5m < -0.3:  # Price dropped >0.3% in last 5 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'HIGH',
+                'message': f"⚠️ STRONG BUY signal BUT price dropped {momentum_5m:.2f}% in last 5min",
+                'action': "WAIT for price stabilization before entering",
+                'technical': "Indicators are lagging - price rejecting recent high"
+            })
+        
+        if momentum_30m < -1.0:  # Price dropped >1% in last 30 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'CRITICAL',
+                'message': f"🚨 BUY signal BUT price falling {momentum_30m:.2f}% (30min)",
+                'action': "DO NOT ENTER - Possible liquidity grab or false breakout",
+                'technical': "Sharp recent decline contradicts bullish indicators"
+            })
+    
+    # CONFLICT 2: Signal says SELL but price is actively rising
+    if sig_5m and "SELL" in sig_5m['Signal']:
+        if momentum_5m > 0.3:  # Price rose >0.3% in last 5 min
+            conflicts.append({
+                'type': 'PRICE_DIVERGENCE',
+                'severity': 'HIGH',
+                'message': f"⚠️ SELL signal BUT price rose {momentum_5m:.2f}% in last 5min",
+                'action': "WAIT for price stabilization before shorting",
+                'technical': "Indicators lagging - price momentum still bullish"
+            })
+    
+    # CONFLICT 3: Timeframe disagreement (5m vs 1h)
+    if sig_5m and sig_1h:
+        if "BUY" in sig_5m['Signal'] and "SELL" in sig_1h['Signal']:
+            conflicts.append({
+                'type': 'TIMEFRAME_CONFLICT',
+                'severity': 'MEDIUM',
+                'message': "⚠️ 5m says BUY but 1h says SELL",
+                'action': "High risk - only scalp if you're experienced",
+                'technical': "Counter-trend trade against higher timeframe"
+            })
+        
+        if "SELL" in sig_5m['Signal'] and "BUY" in sig_1h['Signal']:
+            conflicts.append({
+                'type': 'TIMEFRAME_CONFLICT',
+                'severity': 'MEDIUM',
+                'message': "⚠️ 5m says SELL but 1h says BUY",
+                'action': "Likely a pullback in uptrend - not a reversal",
+                'technical': "Short-term bearish in larger bullish trend"
+            })
+    
+    # WARNING 1: Overbought on BUY signal
+    if sig_5m and "BUY" in sig_5m['Signal'] and sig_5m['RSI'] > 70:
+        warnings.append({
+            'type': 'OVERBOUGHT',
+            'severity': 'MEDIUM',
+            'message': f"⚠️ BUY signal but RSI overbought ({sig_5m['RSI']:.1f})",
+            'action': "Expect pullback soon - use tight stop-loss",
+            'technical': "Momentum exhaustion likely - late entry risk"
+        })
+    
+    # WARNING 2: Oversold on SELL signal
+    if sig_5m and "SELL" in sig_5m['Signal'] and sig_5m['RSI'] < 30:
+        warnings.append({
+            'type': 'OVERSOLD',
+            'severity': 'MEDIUM',
+            'message': f"⚠️ SELL signal but RSI oversold ({sig_5m['RSI']:.1f})",
+            'action': "Bounce likely - avoid shorting here",
+            'technical': "Oversold conditions favor reversal over continuation"
+        })
+    
+    # WARNING 3: Low ADX (weak trend)
+    if sig_5m and sig_5m.get('ADX', 0) < 20:
+        if "STRONG BUY" in sig_5m['Signal'] or "STRONG SELL" in sig_5m['Signal']:
+            warnings.append({
+                'type': 'WEAK_TREND',
+                'severity': 'MEDIUM',
+                'message': f"⚠️ STRONG signal but ADX weak ({sig_5m['ADX']:.1f})",
+                'action': "Choppy market - reduce position size by 50%",
+                'technical': "Low ADX = no clear trend = higher failure rate"
+            })
+    
+    # WARNING 4: Volume divergence
+    df_recent = df_5m.tail(10)
+    avg_volume = df_recent['Volume'].mean()
+    current_volume = df_5m['Volume'].iloc[-1]
+    
+    if current_volume < avg_volume * 0.5:  # Volume 50% below average
+        if sig_5m and ("BUY" in sig_5m['Signal'] or "SELL" in sig_5m['Signal']):
+            warnings.append({
+                'type': 'LOW_VOLUME',
+                'severity': 'LOW',
+                'message': "⚠️ Signal on low volume (50% below average)",
+                'action': "Weak conviction - wait for volume confirmation",
+                'technical': "Low volume moves often reverse - lack of participation"
+            })
+    
+    # Calculate overall risk score
+    risk_score = 0
+    risk_score += len([c for c in conflicts if c['severity'] == 'CRITICAL']) * 30
+    risk_score += len([c for c in conflicts if c['severity'] == 'HIGH']) * 20
+    risk_score += len([c for c in conflicts if c['severity'] == 'MEDIUM']) * 10
+    risk_score += len([w for w in warnings if w['severity'] == 'MEDIUM']) * 5
+    
+    # Overall assessment
+    if risk_score >= 30:
+        assessment = "🚫 HIGH RISK - Do not trade"
+        color = "red"
+    elif risk_score >= 15:
+        assessment = "⚠️ MEDIUM RISK - Reduce position size"
+        color = "orange"
+    elif risk_score > 0:
+        assessment = "💛 LOW RISK - Tradeable with caution"
+        color = "yellow"
+    else:
+        assessment = "✅ LOW RISK - Signal aligned"
+        color = "green"
+    
+    return {
+        'conflicts': conflicts,
+        'warnings': warnings,
+        'risk_score': risk_score,
+        'assessment': assessment,
+        'color': color,
+        'momentum_5m': momentum_5m,
+        'momentum_30m': momentum_30m,
+        'momentum_1h': momentum_1h
+    }
 
-def detect_order_flow(df: pd.DataFrame) -> dict:
-    if len(df) < 10:
-        return {'strength': 0, 'classification': 'Neutral', 'signals': []}
-    strength = 0; signals = []
-    recent = df.tail(10)
-    for i in range(1, len(recent)):
-        curr = recent.iloc[i]; prev = recent.iloc[i-1]
-        rng = curr['High'] - curr['Low'] + 1e-9
-        close_pct = (curr['Close'] - curr['Low']) / rng
-        if close_pct > 0.7 and curr['Volume'] > prev['Volume'] * 1.2:
-            strength += 2; signals.append("🟢 Aggressive buying")
-        elif close_pct < 0.3 and curr['Volume'] > prev['Volume'] * 1.2:
-            strength -= 2; signals.append("🔴 Aggressive selling")
-        body = abs(curr['Close'] - curr['Open'])
-        if body < rng * 0.3 and curr['Volume'] > recent['Volume'].mean() * 2:
-            signals.append("📊 Absorption – Institutional accumulation likely")
-            strength += 1
-    cls = "Bullish" if strength > 2 else "Bearish" if strength < -2 else "Neutral"
-    return {'strength': strength, 'classification': cls, 'signals': signals[-3:]}
+# --- 7. MASTER SIGNAL CALCULATOR (ALL-IN-ONE) ---
+def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
+    """
+    The ULTIMATE signal calculator that considers EVERYTHING:
+    - All technical indicators (RSI, MACD, ADX, Stoch, BB, EMAs)
+    - Volume analysis
+    - Candle patterns
+    - Real-time momentum
+    - Timeframe alignment
+    - Conflict detection
+    - Risk score
+    - Sentiment scoring
+    
+    Returns master signals for Scalping, Intraday, and Swing with confidence scores
+    """
+    
+    master_signals = {
+        'scalping': {'signal': 'NEUTRAL', 'confidence': 0, 'score': 0, 'reasons': []},
+        'intraday': {'signal': 'NEUTRAL', 'confidence': 0, 'score': 0, 'reasons': []},
+        'swing': {'signal': 'NEUTRAL', 'confidence': 0, 'score': 0, 'reasons': []}
+    }
+    
+    # Get all necessary data
+    df_5m = add_indicators(data_sets['5m'])
+    df_15m = add_indicators(data_sets['15m'])
+    df_30m = add_indicators(data_sets['30m'])
+    df_1h = add_indicators(data_sets['1h'])
+    df_4h = add_indicators(data_sets['4h'])
+    
+    # Current values
+    curr_5m = df_5m.iloc[-1]
+    curr_1h = df_1h.iloc[-1]
+    curr_4h = df_4h.iloc[-1]
+    
+    # ============================================
+    # SCALPING SIGNAL (5m + 15m focus)
+    # ============================================
+    
+    scalp_score = 0
+    scalp_max_score = 0
+    scalp_reasons = []
+    
+    # 1. Price Momentum Alignment (Weight: 25 points)
+    scalp_max_score += 25
+    if conflict_analysis['momentum_5m'] > 0.3:
+        scalp_score += 25
+        scalp_reasons.append("✅ Strong upward momentum (+0.3%+)")
+    elif conflict_analysis['momentum_5m'] > 0.1:
+        scalp_score += 15
+        scalp_reasons.append("✅ Positive momentum")
+    elif conflict_analysis['momentum_5m'] < -0.3:
+        scalp_score -= 25
+        scalp_reasons.append("❌ Strong downward momentum")
+    elif conflict_analysis['momentum_5m'] < -0.1:
+        scalp_score -= 15
+        scalp_reasons.append("⚠️ Negative momentum")
+    
+    # 2. Technical Indicators Alignment (Weight: 20 points)
+    scalp_max_score += 20
+    sig_5m = analysis_results.get('5m')
+    if sig_5m:
+        if sig_5m['Score'] >= 75:
+            scalp_score += 20
+            scalp_reasons.append(f"✅ Very strong indicators (Score: {sig_5m['Score']})")
+        elif sig_5m['Score'] >= 60:
+            scalp_score += 12
+            scalp_reasons.append(f"✅ Good indicators (Score: {sig_5m['Score']})")
+        elif sig_5m['Score'] <= 40:
+            scalp_score -= 20
+            scalp_reasons.append(f"❌ Weak indicators (Score: {sig_5m['Score']})")
+        elif sig_5m['Score'] <= 25:
+            scalp_score -= 12
+            scalp_reasons.append(f"⚠️ Poor indicators (Score: {sig_5m['Score']})")
+    
+    # 3. RSI Confirmation (Weight: 15 points)
+    scalp_max_score += 15
+    rsi_5m = curr_5m['RSI']
+    if 40 <= rsi_5m <= 60:
+        scalp_score += 15
+        scalp_reasons.append(f"✅ RSI neutral zone ({rsi_5m:.1f}) - room to move")
+    elif 60 < rsi_5m <= 70:
+        scalp_score += 8
+        scalp_reasons.append(f"✅ RSI bullish ({rsi_5m:.1f})")
+    elif 30 <= rsi_5m < 40:
+        scalp_score += 8
+        scalp_reasons.append(f"⚠️ RSI bearish ({rsi_5m:.1f})")
+    elif rsi_5m > 75:
+        scalp_score -= 10
+        scalp_reasons.append(f"❌ RSI severely overbought ({rsi_5m:.1f})")
+    elif rsi_5m < 25:
+        scalp_score -= 10
+        scalp_reasons.append(f"❌ RSI severely oversold ({rsi_5m:.1f})")
+    
+    # 4. Volume Analysis (Weight: 15 points)
+    scalp_max_score += 15
+    vol_ratio = curr_5m['Volume_Ratio']
+    if vol_ratio > 1.5:
+        scalp_score += 15
+        scalp_reasons.append(f"✅ High volume ({vol_ratio:.1f}x avg) - strong conviction")
+    elif vol_ratio > 1.0:
+        scalp_score += 8
+        scalp_reasons.append(f"✅ Above average volume ({vol_ratio:.1f}x)")
+    elif vol_ratio < 0.5:
+        scalp_score -= 10
+        scalp_reasons.append(f"❌ Low volume ({vol_ratio:.1f}x) - weak move")
+    
+    # 5. Conflict Detection (Weight: 15 points)
+    scalp_max_score += 15
+    risk_score = conflict_analysis['risk_score']
+    if risk_score == 0:
+        scalp_score += 15
+        scalp_reasons.append("✅ No conflicts detected - clean setup")
+    elif risk_score <= 10:
+        scalp_score += 8
+        scalp_reasons.append("✅ Minor warnings only")
+    elif risk_score <= 20:
+        scalp_score -= 5
+        scalp_reasons.append("⚠️ Some conflicts present")
+    else:
+        scalp_score -= 15
+        scalp_reasons.append(f"❌ High risk conflicts (Score: {risk_score})")
+    
+    # 6. Candle Pattern (Weight: 10 points)
+    scalp_max_score += 10
+    candle_5m = identify_candle(df_5m)
+    if "Bullish" in candle_5m or "Hammer" in candle_5m or "Morning Star" in candle_5m:
+        scalp_score += 10
+        scalp_reasons.append(f"✅ Bullish pattern: {candle_5m}")
+    elif "Bearish" in candle_5m or "Shooting Star" in candle_5m or "Evening Star" in candle_5m:
+        scalp_score -= 10
+        scalp_reasons.append(f"❌ Bearish pattern: {candle_5m}")
+    
+    # Calculate scalping signal
+    scalp_normalized = ((scalp_score + scalp_max_score) / (2 * scalp_max_score)) * 100
+    
+    if scalp_normalized >= 75 and risk_score < 20:
+        master_signals['scalping']['signal'] = "STRONG BUY"
+        master_signals['scalping']['confidence'] = "Very High"
+    elif scalp_normalized >= 60 and risk_score < 25:
+        master_signals['scalping']['signal'] = "BUY"
+        master_signals['scalping']['confidence'] = "High"
+    elif scalp_normalized <= 25 and risk_score < 20:
+        master_signals['scalping']['signal'] = "STRONG SELL"
+        master_signals['scalping']['confidence'] = "Very High"
+    elif scalp_normalized <= 40 and risk_score < 25:
+        master_signals['scalping']['signal'] = "SELL"
+        master_signals['scalping']['confidence'] = "High"
+    else:
+        master_signals['scalping']['signal'] = "NEUTRAL"
+        master_signals['scalping']['confidence'] = "Low"
+    
+    master_signals['scalping']['score'] = scalp_normalized
+    master_signals['scalping']['reasons'] = scalp_reasons
+    
+    # ============================================
+    # INTRADAY SIGNAL (30m + 1h focus)
+    # ============================================
+    
+    intra_score = 0
+    intra_max_score = 0
+    intra_reasons = []
+    
+    # 1. Timeframe Alignment (Weight: 30 points)
+    intra_max_score += 30
+    sig_30m = analysis_results.get('30m')
+    sig_1h = analysis_results.get('1h')
+    
+    if sig_30m and sig_1h:
+        if "BUY" in sig_30m['Signal'] and "BUY" in sig_1h['Signal']:
+            intra_score += 30
+            intra_reasons.append("✅ 30m and 1h both BULLISH - strong alignment")
+        elif "SELL" in sig_30m['Signal'] and "SELL" in sig_1h['Signal']:
+            intra_score -= 30
+            intra_reasons.append("❌ 30m and 1h both BEARISH - strong alignment")
+        elif "BUY" in sig_30m['Signal'] and "SELL" in sig_1h['Signal']:
+            intra_score -= 10
+            intra_reasons.append("⚠️ Conflicting timeframes - counter-trend risk")
+        elif "SELL" in sig_30m['Signal'] and "BUY" in sig_1h['Signal']:
+            intra_score -= 10
+            intra_reasons.append("⚠️ Conflicting timeframes - pullback in uptrend")
+    
+    # 2. Price Momentum (Weight: 25 points)
+    intra_max_score += 25
+    if conflict_analysis['momentum_30m'] > 0.5:
+        intra_score += 25
+        intra_reasons.append(f"✅ Strong 30m momentum ({conflict_analysis['momentum_30m']:+.2f}%)")
+    elif conflict_analysis['momentum_30m'] > 0.2:
+        intra_score += 15
+        intra_reasons.append(f"✅ Positive 30m momentum ({conflict_analysis['momentum_30m']:+.2f}%)")
+    elif conflict_analysis['momentum_30m'] < -0.5:
+        intra_score -= 25
+        intra_reasons.append(f"❌ Strong 30m downtrend ({conflict_analysis['momentum_30m']:+.2f}%)")
+    elif conflict_analysis['momentum_30m'] < -0.2:
+        intra_score -= 15
+        intra_reasons.append(f"⚠️ Negative 30m momentum ({conflict_analysis['momentum_30m']:+.2f}%)")
+    
+    # 3. Trend Strength (ADX) (Weight: 20 points)
+    intra_max_score += 20
+    adx_1h = curr_1h['ADX']
+    if adx_1h > 30:
+        intra_score += 20
+        intra_reasons.append(f"✅ Strong trend (ADX: {adx_1h:.1f}) - high probability")
+    elif adx_1h > 25:
+        intra_score += 12
+        intra_reasons.append(f"✅ Moderate trend (ADX: {adx_1h:.1f})")
+    elif adx_1h < 20:
+        intra_score -= 10
+        intra_reasons.append(f"⚠️ Weak trend (ADX: {adx_1h:.1f}) - choppy market")
+    
+    # 4. EMA Alignment (Weight: 15 points)
+    intra_max_score += 15
+    ema9_1h = curr_1h['EMA9']
+    ema21_1h = curr_1h['EMA21']
+    ema50_1h = curr_1h['EMA50']
+    curr_price = curr_1h['Close']
+    
+    if ema9_1h > ema21_1h > ema50_1h and curr_price > ema9_1h:
+        intra_score += 15
+        intra_reasons.append("✅ Perfect bullish EMA stack")
+    elif ema9_1h < ema21_1h < ema50_1h and curr_price < ema9_1h:
+        intra_score -= 15
+        intra_reasons.append("❌ Perfect bearish EMA stack")
+    elif curr_price > ema50_1h:
+        intra_score += 8
+        intra_reasons.append("✅ Above 50 EMA - bullish bias")
+    elif curr_price < ema50_1h:
+        intra_score -= 8
+        intra_reasons.append("⚠️ Below 50 EMA - bearish bias")
+    
+    # 5. Conflict & Risk (Weight: 10 points)
+    intra_max_score += 10
+    if risk_score < 10:
+        intra_score += 10
+        intra_reasons.append("✅ Low risk environment")
+    elif risk_score >= 25:
+        intra_score -= 10
+        intra_reasons.append(f"❌ High risk detected (Score: {risk_score})")
+    
+    # Calculate intraday signal
+    intra_normalized = ((intra_score + intra_max_score) / (2 * intra_max_score)) * 100
+    
+    if intra_normalized >= 75 and risk_score < 25:
+        master_signals['intraday']['signal'] = "STRONG BUY"
+        master_signals['intraday']['confidence'] = "Very High"
+    elif intra_normalized >= 60 and risk_score < 30:
+        master_signals['intraday']['signal'] = "BUY"
+        master_signals['intraday']['confidence'] = "High"
+    elif intra_normalized <= 25 and risk_score < 25:
+        master_signals['intraday']['signal'] = "STRONG SELL"
+        master_signals['intraday']['confidence'] = "Very High"
+    elif intra_normalized <= 40 and risk_score < 30:
+        master_signals['intraday']['signal'] = "SELL"
+        master_signals['intraday']['confidence'] = "High"
+    else:
+        master_signals['intraday']['signal'] = "NEUTRAL"
+        master_signals['intraday']['confidence'] = "Low"
+    
+    master_signals['intraday']['score'] = intra_normalized
+    master_signals['intraday']['reasons'] = intra_reasons
+    
+    # ============================================
+    # SWING SIGNAL (4h + Daily focus)
+    # ============================================
+    
+    swing_score = 0
+    swing_max_score = 0
+    swing_reasons = []
+    
+    # 1. Major Trend (Weight: 35 points)
+    swing_max_score += 35
+    sig_4h = analysis_results.get('4h')
+    
+    if sig_4h:
+        if sig_4h['Score'] >= 75:
+            swing_score += 35
+            swing_reasons.append(f"✅ Very strong 4h trend (Score: {sig_4h['Score']})")
+        elif sig_4h['Score'] >= 65:
+            swing_score += 25
+            swing_reasons.append(f"✅ Strong 4h trend (Score: {sig_4h['Score']})")
+        elif sig_4h['Score'] <= 35:
+            swing_score -= 35
+            swing_reasons.append(f"❌ Very weak 4h trend (Score: {sig_4h['Score']})")
+        elif sig_4h['Score'] <= 45:
+            swing_score -= 25
+            swing_reasons.append(f"⚠️ Weak 4h trend (Score: {sig_4h['Score']})")
+    
+    # 2. Higher Timeframe Alignment (Weight: 30 points)
+    swing_max_score += 30
+    if sig_1h and sig_4h:
+        if "BUY" in sig_1h['Signal'] and "BUY" in sig_4h['Signal']:
+            swing_score += 30
+            swing_reasons.append("✅ 1h and 4h aligned BULLISH")
+        elif "SELL" in sig_1h['Signal'] and "SELL" in sig_4h['Signal']:
+            swing_score -= 30
+            swing_reasons.append("❌ 1h and 4h aligned BEARISH")
+    
+    # 3. 200 EMA Position (Weight: 20 points)
+    swing_max_score += 20
+    ema200_4h = curr_4h['EMA200']
+    price_4h = curr_4h['Close']
+    
+    distance_from_200 = ((price_4h - ema200_4h) / ema200_4h) * 100
+    
+    if price_4h > ema200_4h:
+        if distance_from_200 > 5:
+            swing_score += 20
+            swing_reasons.append(f"✅ Well above 200 EMA (+{distance_from_200:.1f}%)")
+        else:
+            swing_score += 12
+            swing_reasons.append(f"✅ Above 200 EMA (+{distance_from_200:.1f}%)")
+    else:
+        if distance_from_200 < -5:
+            swing_score -= 20
+            swing_reasons.append(f"❌ Well below 200 EMA ({distance_from_200:.1f}%)")
+        else:
+            swing_score -= 12
+            swing_reasons.append(f"⚠️ Below 200 EMA ({distance_from_200:.1f}%)")
+    
+    # 4. ADX Trend Strength (Weight: 15 points)
+    swing_max_score += 15
+    adx_4h = curr_4h['ADX']
+    if adx_4h > 35:
+        swing_score += 15
+        swing_reasons.append(f"✅ Very strong trend (ADX: {adx_4h:.1f})")
+    elif adx_4h > 28:
+        swing_score += 10
+        swing_reasons.append(f"✅ Strong trend (ADX: {adx_4h:.1f})")
+    elif adx_4h < 20:
+        swing_score -= 8
+        swing_reasons.append(f"⚠️ No clear trend (ADX: {adx_4h:.1f})")
+    
+    # Calculate swing signal
+    swing_normalized = ((swing_score + swing_max_score) / (2 * swing_max_score)) * 100
+    
+    if swing_normalized >= 75:
+        master_signals['swing']['signal'] = "STRONG BUY"
+        master_signals['swing']['confidence'] = "Very High"
+    elif swing_normalized >= 65:
+        master_signals['swing']['signal'] = "BUY"
+        master_signals['swing']['confidence'] = "High"
+    elif swing_normalized <= 25:
+        master_signals['swing']['signal'] = "STRONG SELL"
+        master_signals['swing']['confidence'] = "Very High"
+    elif swing_normalized <= 35:
+        master_signals['swing']['signal'] = "SELL"
+        master_signals['swing']['confidence'] = "High"
+    else:
+        master_signals['swing']['signal'] = "NEUTRAL"
+        master_signals['swing']['confidence'] = "Medium"
+    
+    master_signals['swing']['score'] = swing_normalized
+    master_signals['swing']['reasons'] = swing_reasons
+    
+    return master_signals
 
-# ══════════════════════════════════════════════
-# MARKET REGIME
-# ══════════════════════════════════════════════
-
-def detect_regime(df: pd.DataFrame) -> dict | None:
-    df = add_indicators(df)
-    if len(df) < 60:
+# --- 8. BACKTESTING ENGINE ---
+def run_backtest(df, timeframe_name, periods_ahead=1):
+    """
+    Runs backtest on historical data to validate prediction accuracy
+    
+    Args:
+        df: DataFrame with OHLCV data and indicators
+        timeframe_name: Name of timeframe (5m, 1h, etc.)
+        periods_ahead: How many periods ahead to predict (1 = next candle)
+    
+    Returns:
+        Dictionary with backtest results and metrics
+    """
+    if len(df) < 100:
         return None
-    curr = df.iloc[-1]
-    adx = curr['ADX']
-    bb_w = curr['BB_Width'] * 100
-    ema_align = curr['EMA9'] > curr['EMA21'] > curr['EMA50']
-    above200 = curr['Close'] > curr['EMA200']
+    
+    results = {
+        'predictions': [],
+        'actuals': [],
+        'timestamps': [],
+        'correct_direction': 0,
+        'total_predictions': 0,
+        'mae': 0,  # Mean Absolute Error
+        'mape': 0,  # Mean Absolute Percentage Error
+        'direction_accuracy': 0,
+        'within_range': 0
+    }
+    
+    # Run predictions on historical data
+    # Start from index 50 to ensure we have enough data for indicators
+    # Stop before the last 'periods_ahead' to have actual data to compare
+    backtest_window = min(len(df) - periods_ahead - 50, 200)  # Test on last 200 periods max
+    
+    for i in range(50, 50 + backtest_window):
+        # Create subset of data up to this point
+        historical_df = df.iloc[:i].copy()
+        
+        # Make prediction
+        prediction = predict_price_movement(historical_df, timeframe_name)
+        
+        if prediction is None:
+            continue
+        
+        # Get actual price 'periods_ahead' later
+        actual_price = df.iloc[i + periods_ahead]['Close']
+        predicted_price = prediction['predicted']
+        current_price_at_time = prediction['current']
+        
+        # Store results
+        results['predictions'].append(predicted_price)
+        results['actuals'].append(actual_price)
+        results['timestamps'].append(df.index[i])
+        
+        # Check direction accuracy
+        predicted_direction = 1 if predicted_price > current_price_at_time else -1
+        actual_direction = 1 if actual_price > current_price_at_time else -1
+        
+        if predicted_direction == actual_direction:
+            results['correct_direction'] += 1
+        
+        # Check if actual price was within predicted range
+        if prediction['lower_range'] <= actual_price <= prediction['upper_range']:
+            results['within_range'] += 1
+        
+        results['total_predictions'] += 1
+    
+    if results['total_predictions'] > 0:
+        # Calculate metrics
+        predictions_arr = np.array(results['predictions'])
+        actuals_arr = np.array(results['actuals'])
+        
+        # Mean Absolute Error
+        results['mae'] = np.mean(np.abs(predictions_arr - actuals_arr))
+        
+        # Mean Absolute Percentage Error
+        results['mape'] = np.mean(np.abs((actuals_arr - predictions_arr) / actuals_arr)) * 100
+        
+        # Direction Accuracy
+        results['direction_accuracy'] = (results['correct_direction'] / results['total_predictions']) * 100
+        
+        # Range Accuracy (how often actual price was within predicted range)
+        results['range_accuracy'] = (results['within_range'] / results['total_predictions']) * 100
+        
+        # Recent performance (last 20 predictions)
+        recent_count = min(20, results['total_predictions'])
+        recent_correct = sum(1 for i in range(-recent_count, 0) 
+                           if (predictions_arr[i] > predictions_arr[i-1]) == (actuals_arr[i] > actuals_arr[i-1]))
+        results['recent_accuracy'] = (recent_correct / recent_count) * 100 if recent_count > 0 else 0
+    
+    return results
 
-    if adx > 30 and ema_align:
-        regime = "📈 Strong Uptrend"; strat = "Trend-Follow Long"; conf = "High"
-    elif adx > 30 and not ema_align:
-        regime = "📉 Strong Downtrend"; strat = "Trend-Follow Short"; conf = "High"
-    elif adx < 18 and bb_w < 4:
-        regime = "📊 Tight Consolidation"; strat = "Breakout Watch"; conf = "Medium"
-    elif bb_w > 9:
-        regime = "💥 High Volatility"; strat = "Reduce Size / Breakout"; conf = "Low"
+def format_backtest_summary(backtest_results):
+    """Creates a formatted summary of backtest results"""
+    if not backtest_results or backtest_results['total_predictions'] == 0:
+        return "❌ Not enough data for backtesting"
+    
+    # Determine performance grade
+    dir_acc = backtest_results['direction_accuracy']
+    if dir_acc >= 70:
+        grade = "🏆 Excellent"
+        color = "green"
+    elif dir_acc >= 60:
+        grade = "✅ Good"
+        color = "lightgreen"
+    elif dir_acc >= 50:
+        grade = "⚠️ Fair"
+        color = "orange"
     else:
-        regime = "🌊 Ranging/Choppy"; strat = "Mean Reversion"; conf = "Low"
+        grade = "❌ Poor"
+        color = "red"
+    
+    summary = f"""
+    **Backtest Performance: {grade}**
+    
+    📊 **Direction Accuracy:** {dir_acc:.1f}%
+    📈 **Recent Performance (Last 20):** {backtest_results['recent_accuracy']:.1f}%
+    🎯 **Range Accuracy:** {backtest_results['range_accuracy']:.1f}%
+    📉 **Avg Error:** {backtest_results['mape']:.2f}%
+    🔢 **Total Predictions Tested:** {backtest_results['total_predictions']}
+    """
+    
+    return summary, color, dir_acc
+# --- 6. TRADE SETUP CALCULATOR ---
+def calculate_trade(price, atr, mode="LONG", style="Scalp", risk_reward=1.5):
+    """Enhanced trade calculator with risk management"""
+    multiplier = 1.5 if style == "Scalp" else 2.0 if style == "Intraday" else 3.0
+    sl_dist = atr * multiplier
+    
+    if mode == "LONG":
+        sl = price - sl_dist
+        tp = price + (sl_dist * risk_reward)
+        breakeven = price + (sl_dist * 0.5)
+    else:
+        sl = price + sl_dist
+        tp = price - (sl_dist * risk_reward)
+        breakeven = price - (sl_dist * 0.5)
+    
+    risk_pct = (sl_dist / price) * 100
+    reward_pct = ((tp - price) / price) * 100 if mode == "LONG" else ((price - tp) / price) * 100
+    
+    return {
+        'entry': price,
+        'sl': sl,
+        'tp': tp,
+        'breakeven': breakeven,
+        'risk_pct': abs(risk_pct),
+        'reward_pct': abs(reward_pct),
+        'rr_ratio': risk_reward
+    }
 
-    return {'regime': regime, 'strategy': strat, 'confidence': conf,
-            'adx': adx, 'bb_width': bb_w, 'above200': above200}
+# ============================================
+# RENDER FUNCTIONS
+# ============================================
 
-# ══════════════════════════════════════════════
-# NEWS FEED
-# ══════════════════════════════════════════════
+def render_backtest_results(data_sets, symbol):
+    """Renders comprehensive backtest results with visualizations"""
+    
+    st.subheader("🧪 Backtest & Prediction Accuracy Report")
+    
+    st.info("""
+    **How This Works:** We test our prediction model on historical data by:
+    1. Making predictions at each historical point
+    2. Comparing predictions to actual prices that occurred
+    3. Calculating accuracy metrics across all timeframes
+    """)
+    
+    # Run backtests for multiple timeframes
+    timeframes = ['5m', '15m', '1h', '4h']
+    backtest_data = {}
+    
+    with st.spinner("Running backtests on historical data..."):
+        for tf in timeframes:
+            df = add_indicators(data_sets[tf])
+            # Adjust periods_ahead based on timeframe
+            periods = 1 if tf in ['5m', '15m'] else 1
+            backtest_data[tf] = run_backtest(df, tf, periods_ahead=periods)
+    
+    # Display summary cards
+    st.markdown("### 📊 Accuracy by Timeframe")
+    
+    cols = st.columns(4)
+    overall_accuracy = []
+    
+    for idx, tf in enumerate(timeframes):
+        result = backtest_data[tf]
+        with cols[idx]:
+            if result and result['total_predictions'] > 0:
+                summary, color, acc = format_backtest_summary(result)
+                st.markdown(f"**{tf.upper()} Timeframe**")
+                st.markdown(summary)
+                overall_accuracy.append(acc)
+            else:
+                st.warning(f"{tf}: Not enough data")
+    
+    st.divider()
+    
+    # Overall Performance Metrics
+    if overall_accuracy:
+        avg_accuracy = np.mean(overall_accuracy)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("🎯 Average Accuracy", f"{avg_accuracy:.1f}%")
+        
+        with col2:
+            best_tf = timeframes[np.argmax(overall_accuracy)]
+            st.metric("🏆 Best Timeframe", best_tf.upper(), f"{max(overall_accuracy):.1f}%")
+        
+        with col3:
+            # Calculate consistency (lower std dev = more consistent)
+            consistency = 100 - min(np.std(overall_accuracy), 30)
+            st.metric("📈 Consistency", f"{consistency:.1f}%")
+    
+    st.divider()
+    
+    # Detailed Analysis - Choose timeframe
+    st.markdown("### 🔍 Detailed Performance Analysis")
+    
+    selected_tf = st.selectbox("Select Timeframe for Details:", timeframes, index=2)
+    
+    result = backtest_data[selected_tf]
+    
+    if result and result['total_predictions'] > 0:
+        # Performance breakdown
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 📊 Accuracy Metrics")
+            st.write(f"✅ **Direction Accuracy:** {result['direction_accuracy']:.1f}%")
+            st.write(f"🎯 **Range Accuracy:** {result['range_accuracy']:.1f}%")
+            st.write(f"📈 **Recent Performance:** {result['recent_accuracy']:.1f}%")
+            st.write(f"📉 **Avg % Error (MAPE):** {result['mape']:.2f}%")
+            st.write(f"🔢 **Total Tests:** {result['total_predictions']}")
+            
+            # Interpretation
+            st.markdown("---")
+            st.markdown("**💡 What This Means:**")
+            if result['direction_accuracy'] >= 60:
+                st.success("✅ Model shows good predictive power for price direction")
+            elif result['direction_accuracy'] >= 50:
+                st.warning("⚠️ Model shows moderate accuracy - use with caution")
+            else:
+                st.error("❌ Model needs improvement - consider this timeframe less reliable")
+        
+        with col2:
+            st.markdown("#### 📈 Prediction vs Actual")
+            
+            # Create comparison chart
+            if len(result['predictions']) > 0:
+                # Use last 50 predictions for visualization
+                chart_size = min(50, len(result['predictions']))
+                
+                fig = go.Figure()
+                
+                # Actual prices
+                fig.add_trace(go.Scatter(
+                    x=list(range(chart_size)),
+                    y=result['actuals'][-chart_size:],
+                    name='Actual Price',
+                    line=dict(color='blue', width=2)
+                ))
+                
+                # Predicted prices
+                fig.add_trace(go.Scatter(
+                    x=list(range(chart_size)),
+                    y=result['predictions'][-chart_size:],
+                    name='Predicted Price',
+                    line=dict(color='orange', width=2, dash='dash')
+                ))
+                
+                fig.update_layout(
+                    title=f"Last {chart_size} Predictions vs Actual",
+                    xaxis_title="Test Number",
+                    yaxis_title="Price",
+                    height=400,
+                    template="plotly_dark",
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider()
+        
+        # Recommendations based on results
+        st.markdown("### 💡 AI Model Recommendations")
+        
+        recommendations = []
+        
+        if result['direction_accuracy'] >= 65:
+            recommendations.append("✅ **High Confidence:** This timeframe shows strong prediction accuracy. Suitable for trading decisions.")
+        
+        if result['range_accuracy'] >= 70:
+            recommendations.append("✅ **Reliable Ranges:** Price ranges are accurate. Use stop-loss and take-profit levels with confidence.")
+        
+        if result['recent_accuracy'] > result['direction_accuracy'] + 5:
+            recommendations.append("📈 **Improving Performance:** Recent predictions are more accurate. Model is adapting well to current market conditions.")
+        elif result['recent_accuracy'] < result['direction_accuracy'] - 5:
+            recommendations.append("⚠️ **Performance Decline:** Recent accuracy is lower. Market conditions may have changed. Exercise caution.")
+        
+        if result['mape'] < 1.5:
+            recommendations.append("🎯 **Low Error Rate:** Prediction errors are minimal. High precision model.")
+        elif result['mape'] > 5:
+            recommendations.append("⚠️ **High Volatility:** Large prediction errors detected. Consider using wider stop-losses.")
+        
+        if result['direction_accuracy'] < 55:
+            recommendations.append("❌ **Unreliable Timeframe:** Consider using longer timeframes or additional confirmation before trading.")
+        
+        for rec in recommendations:
+            st.markdown(rec)
+    
+    else:
+        st.warning(f"Not enough data to backtest {selected_tf} timeframe")
 
-def get_news() -> list:
-    if FEEDPARSER_AVAILABLE:
-        items = []
-        for url in ['https://cointelegraph.com/rss', 'https://cryptonews.com/news/feed/']:
-            try:
-                feed = feedparser.parse(url)
-                for e in feed.entries[:4]:
-                    items.append({'title': e.title, 'link': e.link,
-                                   'pub': e.get('published', 'Recent')})
-            except: pass
-        if items: return items[:10]
-    return [
-        {'title': 'BTC holds key support as institutions accumulate', 'link': '#', 'pub': 'Recent'},
-        {'title': 'Gold (XAU) surges on geopolitical uncertainty',    'link': '#', 'pub': 'Recent'},
-        {'title': 'Crypto market rebounds after short-term correction','link': '#', 'pub': 'Recent'},
-        {'title': 'XRP gains on SEC settlement rumours',               'link': '#', 'pub': 'Recent'},
+def render_professional_confluence(data_sets, symbol, news_items):
+    """Renders the professional-grade confluence analysis"""
+    
+    st.subheader("🎯 Professional Confluence Analysis")
+    
+    st.info("""
+    **Institutional-Grade Signal Scoring** - This combines:
+    📰 Sentiment (News/Market Context) • 🎯 Market Regime Detection • 📊 Technical Alignment • 💼 Order Flow • 📈 Volume
+    """)
+    
+    # Get all analysis components
+    df_1h = add_indicators(data_sets['1h'])
+    df_5m = add_indicators(data_sets['5m'])
+    
+    sentiment = get_sentiment_score(symbol, news_items)
+    order_flow = detect_order_flow(df_5m)
+    regime = detect_market_regime(df_1h)
+    volume_profile = calculate_volume_profile(df_1h)
+    confluence = calculate_confluence_score(df_1h, sentiment, order_flow, regime)
+    
+    # Main Score Display
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        score = confluence['total_score']
+        
+        if score >= 80:
+            st.success(f"### 🏆 CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**INSTITUTIONAL GRADE SETUP** - All systems aligned!")
+        elif score >= 65:
+            st.info(f"### ✅ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**HIGH QUALITY SETUP** - Strong agreement")
+        elif score >= 50:
+            st.warning(f"### ⚠️ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**MODERATE SETUP** - Mixed signals")
+        else:
+            st.error(f"### ❌ CONFLUENCE SCORE: {score:.1f}/100")
+            st.markdown("**LOW QUALITY** - Conflicting data")
+    
+    with col2:
+        st.metric("Market Regime", regime['regime'] if regime else "Unknown")
+        st.caption(f"Strategy: {regime['strategy']}" if regime else "")
+    
+    with col3:
+        st.metric("Sentiment", sentiment['classification'])
+        st.caption(f"Score: {sentiment['score']:+.0f}")
+    
+    st.divider()
+    
+    # Component Breakdown
+    st.markdown("### 📊 Score Breakdown (Weighted)")
+    
+    breakdown_cols = st.columns(5)
+    components = [
+        ("📰 Sentiment", confluence['breakdown']['Sentiment'], 0.20),
+        ("🎯 Regime", confluence['breakdown']['Regime'], 0.25),
+        ("📈 Technical", confluence['breakdown']['Technical'], 0.30),
+        ("💼 Order Flow", confluence['breakdown']['Order Flow'], 0.15),
+        ("📊 Volume", confluence['breakdown']['Volume'], 0.10)
     ]
-
-# ══════════════════════════════════════════════
-# TRADE CALCULATOR
-# ══════════════════════════════════════════════
-
-def calc_trade(price, atr, direction='LONG', style='Scalp', rr=2.0):
-    mult = {'Scalp': 1.2, 'Intraday': 1.8, 'Swing': 2.5}.get(style, 1.5)
-    sl_dist = atr * mult; tp_dist = sl_dist * rr
-    if direction == 'LONG':
-        sl = price - sl_dist; tp = price + tp_dist; be = price + sl_dist * 0.5
+    
+    for idx, (name, score_str, weight) in enumerate(components):
+        with breakdown_cols[idx]:
+            st.markdown(f"**{name}**")
+            st.markdown(f"{score_str}")
+            st.caption(f"Weight: {weight*100:.0f}%")
+    
+    st.divider()
+    
+    # Detailed Analysis Panels
+    detail_cols = st.columns(2)
+    
+    with detail_cols[0]:
+        # Sentiment Details
+        st.markdown("#### 📰 Sentiment Analysis")
+        if sentiment['signals']:
+            for signal in sentiment['signals']:
+                st.caption(signal)
+        else:
+            st.caption("No strong sentiment signals detected")
+        
+        # Order Flow Details
+        st.markdown("#### 💼 Order Flow Analysis")
+        if order_flow and order_flow['signals']:
+            st.markdown(f"**{order_flow['classification']}** (Strength: {order_flow['strength']:+d})")
+            for signal in order_flow['signals']:
+                st.caption(signal)
+        else:
+            st.caption("Neutral order flow")
+    
+    with detail_cols[1]:
+        # Regime Details
+        st.markdown("#### 🎯 Market Regime")
+        if regime:
+            st.markdown(f"**{regime['regime']}**")
+            st.caption(f"• ADX: {regime['adx']:.1f} {'(Strong Trend)' if regime['adx'] > 25 else '(Weak Trend)'}")
+            st.caption(f"• BB Width: {regime['bb_width']:.2f}% {'(High Vol)' if regime['bb_width'] > 8 else '(Low Vol)'}")
+            st.caption(f"• Best Strategy: {regime['strategy']}")
+            st.caption(f"• Confidence: {regime['confidence']}")
+        
+        # Volume Profile
+        st.markdown("#### 📊 Volume Profile")
+        if volume_profile:
+            current_price = df_1h['Close'].iloc[-1]
+            st.caption(f"• POC (High Vol Zone): ${volume_profile['poc']:,.2f}")
+            st.caption(f"• Value Area: ${volume_profile['va_low']:,.2f} - ${volume_profile['va_high']:,.2f}")
+            
+            if volume_profile['va_low'] <= current_price <= volume_profile['va_high']:
+                st.caption("✅ Price in Value Area (Fair value zone)")
+            elif current_price > volume_profile['va_high']:
+                st.caption("⚠️ Price above Value Area (Premium zone)")
+            else:
+                st.caption("⚠️ Price below Value Area (Discount zone)")
+    
+    st.divider()
+    
+    # Alert Check
+    if score >= st.session_state.alert_threshold:
+        st.success(f"""
+        ### 🔔 ALERT TRIGGERED!
+        
+        Confluence Score ({score:.1f}) exceeded alert threshold ({st.session_state.alert_threshold})
+        
+        **In production mode, you would receive:**
+        - 📱 Mobile push notification
+        - 📧 Email alert
+        - 💬 SMS/Telegram message
+        
+        ✅ This is an institutional-grade setup!
+        """)
+    
+    # Trading Recommendation
+    st.markdown("### 💡 Confluence-Based Recommendation")
+    
+    if score >= 80:
+        st.success("""
+        **🏆 STRONG CONVICTION TRADE**
+        - All systems aligned (Sentiment, Regime, Technicals, Flow, Volume)
+        - This is the type of setup institutions wait for
+        - Position size: 100% of normal size
+        - Confidence level: Very High
+        """)
+    elif score >= 65:
+        st.info("""
+        **✅ GOOD QUALITY SETUP**
+        - Most systems aligned
+        - Acceptable for experienced traders
+        - Position size: 75-100% of normal size
+        - Confidence level: High
+        """)
+    elif score >= 50:
+        st.warning("""
+        **⚠️ MIXED SIGNALS**
+        - Some conflicting data between systems
+        - Only for very experienced traders with tight risk management
+        - Position size: 25-50% of normal size
+        - Confidence level: Medium
+        """)
     else:
-        sl = price + sl_dist; tp = price - tp_dist; be = price - sl_dist * 0.5
-    return {'entry': price, 'sl': sl, 'tp': tp, 'breakeven': be,
-            'risk_pct': sl_dist / price * 100, 'reward_pct': tp_dist / price * 100,
-            'rr': rr}
+        st.error("""
+        **❌ LOW QUALITY SETUP**
+        - Major conflicts between analysis layers
+        - Do NOT trade - wait for better setup
+        - Position size: 0% (skip this trade)
+        - Confidence level: Low
+        """)
 
-# ══════════════════════════════════════════════
-# ═══════  RENDER HELPERS  ════════════════════
-# ══════════════════════════════════════════════
-
-def _sig_card_css(signal: str) -> str:
-    if "STRONG BUY"  in signal: return "card-strong-buy"
-    if "BUY"         in signal: return "card-buy"
-    if "STRONG SELL" in signal: return "card-strong-sell"
-    if "SELL"        in signal: return "card-sell"
-    return "card-neutral"
-
-def _sig_icon(signal: str) -> str:
-    if "STRONG BUY"  in signal: return "🚀"
-    if "BUY"         in signal: return "📈"
-    if "STRONG SELL" in signal: return "💀"
-    if "SELL"        in signal: return "📉"
-    return "⏸"
-
-def render_master_signal_cards(masters: dict):
-    """Renders the 3 master signal cards prominently at the top."""
-    col1, col2, col3 = st.columns(3)
-    labels = [
-        ("⚡ SCALPING (15m)", "scalp"),
-        ("📅 INTRADAY (1H)",  "intraday"),
-        ("🌊 SWING (4H/D)",   "swing"),
-    ]
-    for col, (label, key) in zip([col1, col2, col3], labels):
-        ms = masters.get(key, {'signal': 'NEUTRAL', 'score': 50, 'conf': 'Low'})
-        css = _sig_card_css(ms['signal'])
-        icon = _sig_icon(ms['signal'])
-        with col:
-            st.markdown(f"""
-            <div class="sig-card {css}">
-                <div class="sig-label">{label}</div>
-                <div class="sig-main">{icon} {ms['signal']}</div>
-                <div class="sig-score">Score: {ms['score']:.1f} / 100</div>
-                <div class="sig-conf">Confidence: {ms['conf']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-def render_scalp_detail(scalp: dict):
-    """Detailed 15m scalp panel."""
-    st.markdown("#### ⚡ 15m Scalp Deep-Dive")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Entry", f"${scalp['price']:,.4f}")
-    c2.metric("Stop-Loss", f"${scalp['sl']:,.4f}")
-    c3.metric("Take-Profit", f"${scalp['tp']:,.4f}")
-    c4.metric("RSI / StochRSI", f"{scalp['rsi']:.0f} / {scalp['stoch_k']:.0f}")
-    st.caption(f"Pattern: {scalp['pattern']}  |  ATR: {scalp['atr']:.4f}")
-    with st.expander("📋 Scalp Signal Reasoning"):
-        for r in scalp['reasons']:
-            st.write(r)
-
-
-def render_conflict_panel(conflict: dict):
-    """Conflict & Risk panel."""
-    st.subheader("🚨 Signal Quality & Risk Check")
-    c1, c2, c3 = st.columns([2, 1, 1])
-    risk = conflict['risk_score']
-    if risk >= 35:
-        c1.error(f"**{conflict['assessment']}**")
-    elif risk >= 20:
-        c1.warning(f"**{conflict['assessment']}**")
-    else:
-        c1.success(f"**{conflict['assessment']}**")
-    c2.metric("Risk Score", risk, help="0 = clean, 35+ = skip")
-    c3.metric("15m Momentum", f"{conflict['momentum_15m']:+.2f}%")
-
-    for cf in conflict['conflicts']:
-        cls = 'conflict-critical' if cf['severity'] == 'HIGH' else 'conflict-medium'
+def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
+    """Renders the full single asset analysis view"""
+    
+    current_price = data_sets['5m'].iloc[-1]['Close']
+    price_change_24h = ((current_price - data_sets['1d'].iloc[-2]['Close']) / data_sets['1d'].iloc[-2]['Close']) * 100
+    
+    # Mobile mode - simplified view
+    if st.session_state.mobile_mode:
+        st.subheader("📱 Quick View")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("💰 Price", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+        with col2:
+            volume_24h = data_sets['5m']['Volume'].tail(288).sum()
+            st.metric("📊 Volume", f"{volume_24h:,.0f}")
+        
+        st.divider()
+        
+        # Get news and run confluence
+        news_items = get_crypto_news()
+        render_professional_confluence(data_sets, symbol, news_items)
+        
+        st.divider()
+        
+        # Just show key signals
+        render_timeframe_scanner(data_sets, risk_reward, position_size)
+        
+        return  # Skip heavy charts in mobile mode
+    
+    # Full Desktop View
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("💰 Current Price", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+    with col2:
+        high_24h = data_sets['5m']['High'].tail(288).max()
+        st.metric("📊 24h High", f"${high_24h:,.2f}")
+    with col3:
+        low_24h = data_sets['5m']['Low'].tail(288).min()
+        st.metric("📊 24h Low", f"${low_24h:,.2f}")
+    with col4:
+        volume_24h = data_sets['5m']['Volume'].tail(288).sum()
+        st.metric("📊 24h Volume", f"{volume_24h:,.0f}")
+    
+    st.divider()
+    
+    # Professional Confluence Analysis (NEW!)
+    news_items = get_crypto_news()
+    render_professional_confluence(data_sets, symbol, news_items)
+    
+    st.divider()
+    
+    # --- MASTER SIGNALS (TOP PRIORITY) ---
+    st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
+    st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
+    
+    # Get analysis results first for master signal calculation
+    timeframes_for_analysis = ['5m', '15m', '30m', '1h', '4h']
+    analysis_results_temp = {}
+    
+    for tf in timeframes_for_analysis:
+        df = add_indicators(data_sets[tf])
+        sig = generate_advanced_signal(df, tf)
+        analysis_results_temp[tf] = sig
+    
+    # Get conflict analysis
+    conflict_analysis_temp = detect_signal_conflicts(data_sets, analysis_results_temp)
+    
+    # Calculate master signals
+    master_signals = calculate_master_signal(data_sets, analysis_results_temp, conflict_analysis_temp)
+    
+    # Display in prominent cards
+    sig_col1, sig_col2, sig_col3 = st.columns(3)
+    
+    # Scalping Master Signal
+    with sig_col1:
+        scalp_sig = master_signals['scalping']
+        
+        # Color coding
+        if "STRONG BUY" in scalp_sig['signal']:
+            bg_color = "#00ff00"
+            text_color = "black"
+            icon = "🚀"
+        elif "BUY" in scalp_sig['signal']:
+            bg_color = "#90EE90"
+            text_color = "black"
+            icon = "📈"
+        elif "STRONG SELL" in scalp_sig['signal']:
+            bg_color = "#ff4b4b"
+            text_color = "white"
+            icon = "🔻"
+        elif "SELL" in scalp_sig['signal']:
+            bg_color = "#FFA07A"
+            text_color = "black"
+            icon = "📉"
+        else:
+            bg_color = "#808080"
+            text_color = "white"
+            icon = "⏸️"
+        
         st.markdown(f"""
-        <div class="{cls}">
-            <b>{cf['msg']}</b><br>
-            <small>💡 {cf['action']}</small>
+        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+            <h3 style="color: {text_color}; margin: 0;">⚡ SCALPING</h3>
+            <div style="font-size: 32px; margin: 10px 0;">{icon} {scalp_sig['signal']}</div>
+            <div style="color: {text_color}; font-size: 18px;">Score: {scalp_sig['score']:.1f}/100</div>
+            <div style="color: {text_color}; font-size: 14px;">Confidence: {scalp_sig['confidence']}</div>
         </div>
         """, unsafe_allow_html=True)
-
-    for w in conflict['warnings']:
-        st.warning(f"{w['msg']} — {w['action']}")
-
-
-def render_timeframe_scanner(datasets: dict, rr: float, pos_size: float):
-    """Full multi-timeframe scanner + trade setups."""
-    st.subheader("⏰ Multi-Timeframe Scanner")
-    tfs = ['15m', '30m', '1h', '4h', '1d']
-    cols = st.columns(len(tfs))
-    all_sigs = {}
-
-    for col, tf in zip(cols, tfs):
-        df = add_indicators(datasets[tf])
-        sig = generate_signal(df, tf)
-        all_sigs[tf] = sig
-        with col:
-            st.markdown(f"**{tf.upper()}**")
-            if sig:
-                css = _sig_card_css(sig['Signal'])
-                icon = _sig_icon(sig['Signal'])
-                st.markdown(f"""
-                <div class="sig-card {css}" style="padding:12px 8px;">
-                    <div style="font-size:11px;opacity:.7;">{icon}</div>
-                    <div style="font-size:13px;font-weight:700;">{sig['Signal'].replace('🟢','').replace('🔴','').replace('🟡','').strip()}</div>
-                    <div style="font-size:11px;">{sig['Score']}/100</div>
+        
+        with st.expander("📋 See Why", expanded=False):
+            for reason in scalp_sig['reasons']:
+                st.write(reason)
+    
+    # Intraday Master Signal
+    with sig_col2:
+        intra_sig = master_signals['intraday']
+        
+        if "STRONG BUY" in intra_sig['signal']:
+            bg_color = "#00ff00"
+            text_color = "black"
+            icon = "🚀"
+        elif "BUY" in intra_sig['signal']:
+            bg_color = "#90EE90"
+            text_color = "black"
+            icon = "📈"
+        elif "STRONG SELL" in intra_sig['signal']:
+            bg_color = "#ff4b4b"
+            text_color = "white"
+            icon = "🔻"
+        elif "SELL" in intra_sig['signal']:
+            bg_color = "#FFA07A"
+            text_color = "black"
+            icon = "📉"
+        else:
+            bg_color = "#808080"
+            text_color = "white"
+            icon = "⏸️"
+        
+        st.markdown(f"""
+        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+            <h3 style="color: {text_color}; margin: 0;">📅 INTRADAY</h3>
+            <div style="font-size: 32px; margin: 10px 0;">{icon} {intra_sig['signal']}</div>
+            <div style="color: {text_color}; font-size: 18px;">Score: {intra_sig['score']:.1f}/100</div>
+            <div style="color: {text_color}; font-size: 14px;">Confidence: {intra_sig['confidence']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.expander("📋 See Why", expanded=False):
+            for reason in intra_sig['reasons']:
+                st.write(reason)
+    
+    # Swing Master Signal
+    with sig_col3:
+        swing_sig = master_signals['swing']
+        
+        if "STRONG BUY" in swing_sig['signal']:
+            bg_color = "#00ff00"
+            text_color = "black"
+            icon = "🚀"
+        elif "BUY" in swing_sig['signal']:
+            bg_color = "#90EE90"
+            text_color = "black"
+            icon = "📈"
+        elif "STRONG SELL" in swing_sig['signal']:
+            bg_color = "#ff4b4b"
+            text_color = "white"
+            icon = "🔻"
+        elif "SELL" in swing_sig['signal']:
+            bg_color = "#FFA07A"
+            text_color = "black"
+            icon = "📉"
+        else:
+            bg_color = "#808080"
+            text_color = "white"
+            icon = "⏸️"
+        
+        st.markdown(f"""
+        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+            <h3 style="color: {text_color}; margin: 0;">🌊 SWING</h3>
+            <div style="font-size: 32px; margin: 10px 0;">{icon} {swing_sig['signal']}</div>
+            <div style="color: {text_color}; font-size: 18px;">Score: {swing_sig['score']:.1f}/100</div>
+            <div style="color: {text_color}; font-size: 14px;">Confidence: {swing_sig['confidence']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.expander("📋 See Why", expanded=False):
+            for reason in swing_sig['reasons']:
+                st.write(reason)
+    
+    # Quick interpretation guide
+    st.info("""
+    💡 **How to Read Master Signals:**
+    - **STRONG BUY/SELL (75%+):** All factors aligned - highest conviction trade
+    - **BUY/SELL (60-75%):** Most factors aligned - good trade opportunity
+    - **NEUTRAL (<60%):** Mixed signals - wait for clarity
+    
+    Click "📋 See Why" to understand the exact reasoning behind each signal.
+    """)
+    
+    st.divider()
+    
+    # --- AI PRICE PREDICTION ---
+    st.subheader("🤖 AI Price Prediction Engine")
+    
+    pred_cols = st.columns([2, 1])
+    
+    with pred_cols[0]:
+        pred_5m = predict_price_movement(add_indicators(data_sets['5m']), '5m')
+        pred_1h = predict_price_movement(add_indicators(data_sets['1h']), '1h')
+        pred_4h = predict_price_movement(add_indicators(data_sets['4h']), '4h')
+        
+        if pred_1h:
+            st.markdown(f"""
+            <div class="prediction-box">
+                <h3>🎯 Next Hour Prediction</h3>
+                <div style="font-size: 32px; margin: 10px 0;">
+                    ${pred_1h['predicted']:,.2f} {pred_1h['direction']}
                 </div>
-                """, unsafe_allow_html=True)
-                st.caption(f"RSI {sig['RSI']} | ADX {sig['ADX']}")
-                with st.expander("Details"):
-                    for s in sig['Signals'][:5]: st.caption(s)
-
+                <div style="font-size: 18px;">
+                    Expected Movement: <b>{pred_1h['movement_pct']:+.2f}%</b> ({pred_1h['strength']})
+                </div>
+                <div style="margin-top: 10px; font-size: 14px;">
+                    Confidence: {pred_1h['confidence']:.1f}% | Range: ${pred_1h['lower_range']:,.2f} - ${pred_1h['upper_range']:,.2f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Show prediction methods breakdown
+            with st.expander("🔬 See Prediction Method Details"):
+                st.markdown("**How This Prediction Was Made:**")
+                st.write("Our AI uses 6 different prediction methods and combines them with intelligent weighting:")
+                
+                method_names = {
+                    'Weighted_Linear': '📈 Time-Weighted Trend Analysis',
+                    'Momentum_EMA': '🚀 Multi-EMA Momentum',
+                    'Mean_Reversion': '🔄 Bollinger Band Mean Reversion',
+                    'Volume_Weighted': '📊 Volume-Weighted Analysis',
+                    'SR_Level': '🎯 Support/Resistance Levels',
+                    'Trend_ADX': '💪 ADX Trend Strength'
+                }
+                
+                for method_key, method_name in method_names.items():
+                    if method_key in pred_1h['method_predictions']:
+                        pred_val = pred_1h['method_predictions'][method_key]
+                        weight = pred_1h['method_weights'][method_key]
+                        st.write(f"{method_name}: ${pred_val:,.2f} (Weight: {weight:.1f})")
+                
+                st.divider()
+                st.caption(f"📊 ADX (Trend Strength): {pred_1h['adx']:.1f}")
+                st.caption(f"📈 RSI (Momentum): {pred_1h['rsi']:.1f}")
+    
+    with pred_cols[1]:
+        if pred_5m and pred_4h:
+            st.markdown("**⚡ Short-Term (5m)**")
+            st.write(f"{pred_5m['direction']} {pred_5m['movement_pct']:+.2f}%")
+            st.write(f"Strength: {pred_5m['strength']}")
+            
+            st.markdown("**📅 Medium-Term (4h)**")
+            st.write(f"{pred_4h['direction']} {pred_4h['movement_pct']:+.2f}%")
+            st.write(f"Strength: {pred_4h['strength']}")
+    
     st.divider()
-
-    # ── Candle Patterns ──────────────────────────
-    st.subheader("🕯️ Candlestick Patterns (15m + 1H)")
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        st.markdown("**15m Patterns**")
-        for p in identify_candle_patterns(datasets['15m'])[:4]:
-            bias_color = "🟢" if p['bias']=='bullish' else "🔴" if p['bias']=='bearish' else "⚪"
-            st.caption(f"{bias_color} {p['name']} ({p['strength']})")
-    with pc2:
-        st.markdown("**1H Patterns**")
-        for p in identify_candle_patterns(datasets['1h'])[:4]:
-            bias_color = "🟢" if p['bias']=='bullish' else "🔴" if p['bias']=='bearish' else "⚪"
-            st.caption(f"{bias_color} {p['name']} ({p['strength']})")
-
+    
+    # Backtest section (conditional)
+    if st.session_state.show_backtest:
+        render_backtest_results(data_sets, symbol)
+        st.divider()
+    
+    # Multi-timeframe + strategies
+    render_timeframe_scanner(data_sets, risk_reward, position_size)
+    
     st.divider()
+    
+    # Advanced chart
+    render_advanced_chart(data_sets)
+    
+    st.divider()
+    
+    # News feed
+    render_news_feed()
 
-    # ── AI Trade Setups ──────────────────────────
+
+def render_compact_analysis(data_sets, symbol, risk_reward, position_size):
+    """Renders compact analysis for multi-asset comparison (Master Signals + Scanner + Strategies)"""
+    
+    current_price = data_sets['5m'].iloc[-1]['Close']
+    price_change_24h = ((current_price - data_sets['1d'].iloc[-2]['Close']) / data_sets['1d'].iloc[-2]['Close']) * 100
+    
+    # Price header
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("💰 Price", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+    with col2:
+        volume_24h = data_sets['5m']['Volume'].tail(288).sum()
+        st.metric("📊 Volume", f"{volume_24h:,.0f}")
+    
+    st.divider()
+    
+    # --- MASTER SIGNALS (Compact Version) ---
+    st.markdown("### 🎯 Master Signals")
+    
+    # Get analysis for master signals
+    timeframes = ['5m', '15m', '30m', '1h', '4h']
+    analysis_results_temp = {}
+    
+    for tf in timeframes:
+        df = add_indicators(data_sets[tf])
+        sig = generate_advanced_signal(df, tf)
+        analysis_results_temp[tf] = sig
+    
+    conflict_analysis_temp = detect_signal_conflicts(data_sets, analysis_results_temp)
+    master_signals = calculate_master_signal(data_sets, analysis_results_temp, conflict_analysis_temp)
+    
+    # Compact display
+    m_col1, m_col2, m_col3 = st.columns(3)
+    
+    with m_col1:
+        scalp_sig = master_signals['scalping']
+        color = "green" if "BUY" in scalp_sig['signal'] else "red" if "SELL" in scalp_sig['signal'] else "gray"
+        st.markdown(f"**⚡ Scalp:** <span style='color:{color}'>{scalp_sig['signal']}</span>", unsafe_allow_html=True)
+        st.caption(f"{scalp_sig['score']:.0f}/100")
+    
+    with m_col2:
+        intra_sig = master_signals['intraday']
+        color = "green" if "BUY" in intra_sig['signal'] else "red" if "SELL" in intra_sig['signal'] else "gray"
+        st.markdown(f"**📅 Intra:** <span style='color:{color}'>{intra_sig['signal']}</span>", unsafe_allow_html=True)
+        st.caption(f"{intra_sig['score']:.0f}/100")
+    
+    with m_col3:
+        swing_sig = master_signals['swing']
+        color = "green" if "BUY" in swing_sig['signal'] else "red" if "SELL" in swing_sig['signal'] else "gray"
+        st.markdown(f"**🌊 Swing:** <span style='color:{color}'>{swing_sig['signal']}</span>", unsafe_allow_html=True)
+        st.caption(f"{swing_sig['score']:.0f}/100")
+    
+    st.divider()
+    
+    # Only render scanner and strategies (compact view)
+    render_timeframe_scanner(data_sets, risk_reward, position_size)
+
+
+def render_timeframe_scanner(data_sets, risk_reward, position_size):
+    """Renders multi-timeframe scanner and AI trade setups"""
+    
+    # --- MULTI-TIMEFRAME ANALYSIS ---
+    st.subheader("⏰ Multi-Timeframe Scanner")
+    
+    tf_cols = st.columns(5)
+    timeframes = ['5m', '15m', '30m', '1h', '4h']
+    
+    analysis_results = {}
+    
+    for i, tf in enumerate(timeframes):
+        df = data_sets[tf]
+        df = add_indicators(df)
+        candle = identify_candle(df)
+        sig = generate_advanced_signal(df, tf)
+        
+        analysis_results[tf] = sig
+        
+        with tf_cols[i]:
+            st.markdown(f"**{tf}**")
+            st.caption(candle[:30])  # Truncate long pattern names
+            
+            if sig:
+                if "STRONG BUY" in sig['Signal']:
+                    st.markdown(f"<div class='signal-strong-buy'>{sig['Signal']}</div>", unsafe_allow_html=True)
+                elif "STRONG SELL" in sig['Signal']:
+                    st.markdown(f"<div class='signal-strong-sell'>{sig['Signal']}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"**{sig['Signal']}**")
+                
+                st.progress(sig['Score'] / 100)
+                st.caption(f"Score: {sig['Score']}/100")
+                st.write(f"RSI: {sig['RSI']}")
+                
+                with st.expander("📋"):
+                    for signal in sig['Signals'][:3]:
+                        st.caption(signal)
+    
+    st.divider()
+    
+    # --- DIVERGENCE & CONFLICT DETECTION ---
+    st.subheader("🚨 Signal Quality Check")
+    
+    conflict_analysis = detect_signal_conflicts(data_sets, analysis_results)
+    
+    # Display overall assessment
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        if conflict_analysis['color'] == 'red':
+            st.error(f"**{conflict_analysis['assessment']}**")
+        elif conflict_analysis['color'] == 'orange':
+            st.warning(f"**{conflict_analysis['assessment']}**")
+        elif conflict_analysis['color'] == 'yellow':
+            st.info(f"**{conflict_analysis['assessment']}**")
+        else:
+            st.success(f"**{conflict_analysis['assessment']}**")
+    
+    with col2:
+        st.metric("Risk Score", conflict_analysis['risk_score'], 
+                 "Lower is better", delta_color="inverse")
+    
+    with col3:
+        st.metric("Live Momentum", f"{conflict_analysis['momentum_5m']:+.2f}%",
+                 "Last 5 minutes")
+    
+    # Display conflicts (CRITICAL issues)
+    if conflict_analysis['conflicts']:
+        st.markdown("### 🚨 Critical Conflicts Detected")
+        for conflict in conflict_analysis['conflicts']:
+            severity_icon = "🚨" if conflict['severity'] == 'CRITICAL' else "⚠️"
+            
+            with st.expander(f"{severity_icon} {conflict['message']}", expanded=True):
+                st.markdown(f"**What's happening:** {conflict['technical']}")
+                st.markdown(f"**Recommended action:** {conflict['action']}")
+                
+                if conflict['severity'] == 'CRITICAL':
+                    st.error("❌ This is a high-risk situation. Consider waiting.")
+    
+    # Display warnings (Important but not critical)
+    if conflict_analysis['warnings']:
+        st.markdown("### ⚠️ Important Warnings")
+        warn_cols = st.columns(2)
+        for idx, warning in enumerate(conflict_analysis['warnings']):
+            with warn_cols[idx % 2]:
+                st.warning(f"**{warning['message']}**")
+                st.caption(f"💡 {warning['action']}")
+    
+    # Show real-time momentum
+    with st.expander("📊 Real-Time Price Momentum Analysis"):
+        mom_col1, mom_col2, mom_col3 = st.columns(3)
+        
+        with mom_col1:
+            color = "green" if conflict_analysis['momentum_5m'] > 0 else "red"
+            st.markdown(f"**5-Min:** <span style='color:{color}'>{conflict_analysis['momentum_5m']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        with mom_col2:
+            color = "green" if conflict_analysis['momentum_30m'] > 0 else "red"
+            st.markdown(f"**30-Min:** <span style='color:{color}'>{conflict_analysis['momentum_30m']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        with mom_col3:
+            color = "green" if conflict_analysis['momentum_1h'] > 0 else "red"
+            st.markdown(f"**1-Hour:** <span style='color:{color}'>{conflict_analysis['momentum_1h']:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        st.caption("💡 Real-time momentum helps identify if indicators are lagging behind actual price movement")
+    
+    st.divider()
+    
+    # --- AI TRADING STRATEGIES ---
     st.subheader("🎯 AI Trade Setups")
-    sc, ic, swc = st.columns(3)
-
-    # Scalp
-    s15 = all_sigs.get('15m')
-    with sc:
-        st.markdown("### ⚡ Scalp (15m)")
-        if s15:
-            direction = "LONG" if "BUY" in s15['Signal'] else "SHORT" if "SELL" in s15['Signal'] else None
-            if direction:
-                t = calc_trade(s15['Price'], s15['ATR'], direction, 'Scalp', rr)
-                fn = st.success if direction == "LONG" else st.error
-                fn(f"{'📈' if direction=='LONG' else '📉'} {direction}")
-                st.write(f"Entry: **${t['entry']:,.4f}**")
-                st.write(f"🎯 TP: ${t['tp']:,.4f} (+{t['reward_pct']:.2f}%)")
-                st.write(f"🛑 SL: ${t['sl']:,.4f} (-{t['risk_pct']:.2f}%)")
-                st.write(f"⚖️ BE: ${t['breakeven']:,.4f}")
-                st.caption(f"Risk $: ${pos_size * t['risk_pct'] / 100:.2f}")
+    
+    strat_cols = st.columns(3)
+    
+    # Strategy 1: SCALPING
+    with strat_cols[0]:
+        st.markdown("### ⚡ Scalping")
+        s_data = analysis_results.get('5m')
+        
+        if s_data:
+            if "BUY" in s_data['Signal']:
+                trade = calculate_trade(s_data['Price'], s_data['ATR'], "LONG", "Scalp", risk_reward)
+                st.success("📈 LONG")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
+                
+            elif "SELL" in s_data['Signal']:
+                trade = calculate_trade(s_data['Price'], s_data['ATR'], "SHORT", "Scalp", risk_reward)
+                st.error("📉 SHORT")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
             else:
-                st.info("⏸ No Setup")
-
-    # Intraday
-    s30 = all_sigs.get('30m'); s1h = all_sigs.get('1h')
-    with ic:
-        st.markdown("### 📅 Intraday (30m+1H)")
-        if s30 and s1h:
-            if "BUY" in s30['Signal'] and "BUY" in s1h['Signal']:
-                t = calc_trade(s1h['Price'], s1h['ATR'], 'LONG', 'Intraday', rr)
-                st.success("📈 LONG (Aligned)")
-                st.write(f"Entry: **${t['entry']:,.4f}**")
-                st.write(f"🎯 TP: ${t['tp']:,.4f} (+{t['reward_pct']:.2f}%)")
-                st.write(f"🛑 SL: ${t['sl']:,.4f} (-{t['risk_pct']:.2f}%)")
-                st.caption(f"Risk $: ${pos_size * t['risk_pct'] / 100:.2f}")
-            elif "SELL" in s30['Signal'] and "SELL" in s1h['Signal']:
-                t = calc_trade(s1h['Price'], s1h['ATR'], 'SHORT', 'Intraday', rr)
-                st.error("📉 SHORT (Aligned)")
-                st.write(f"Entry: **${t['entry']:,.4f}**")
-                st.write(f"🎯 TP: ${t['tp']:,.4f} (+{t['reward_pct']:.2f}%)")
-                st.write(f"🛑 SL: ${t['sl']:,.4f} (-{t['risk_pct']:.2f}%)")
-                st.caption(f"Risk $: ${pos_size * t['risk_pct'] / 100:.2f}")
+                st.info("⏸️ No Setup")
+                st.caption(f"Score: {s_data['Score']}/100")
+    
+    # Strategy 2: INTRADAY
+    with strat_cols[1]:
+        st.markdown("### 📅 Intraday")
+        i_data = analysis_results.get('30m')
+        h_data = analysis_results.get('1h')
+        
+        if i_data and h_data:
+            if "BUY" in i_data['Signal'] and "BUY" in h_data['Signal']:
+                trade = calculate_trade(i_data['Price'], i_data['ATR'], "LONG", "Intraday", risk_reward)
+                st.success("📈 LONG ✓✓")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
+                
+            elif "SELL" in i_data['Signal'] and "SELL" in h_data['Signal']:
+                trade = calculate_trade(i_data['Price'], i_data['ATR'], "SHORT", "Intraday", risk_reward)
+                st.error("📉 SHORT ✓✓")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
             else:
-                st.warning("⏸ Wait – Timeframes not aligned")
-
-    # Swing
-    s4h = all_sigs.get('4h')
-    with swc:
-        st.markdown("### 🌊 Swing (4H)")
-        if s4h:
-            direction = "LONG" if "BUY" in s4h['Signal'] else "SHORT" if "SELL" in s4h['Signal'] else None
-            if direction:
-                t = calc_trade(s4h['Price'], s4h['ATR'], direction, 'Swing', rr)
-                fn = st.success if direction == "LONG" else st.error
-                fn(f"{'📈' if direction=='LONG' else '📉'} {direction}")
-                st.write(f"Entry: **${t['entry']:,.4f}**")
-                st.write(f"🎯 TP: ${t['tp']:,.4f} (+{t['reward_pct']:.2f}%)")
-                st.write(f"🛑 SL: ${t['sl']:,.4f} (-{t['risk_pct']:.2f}%)")
-                st.caption(f"Risk $: ${pos_size * t['risk_pct'] / 100:.2f}")
+                st.warning("⏸️ Wait")
+                st.caption(f"30m: {i_data['Score']}/100")
+                st.caption(f"1h: {h_data['Score']}/100")
+    
+    # Strategy 3: SWING
+    with strat_cols[2]:
+        st.markdown("### 🌊 Swing")
+        w_data = analysis_results.get('4h')
+        
+        if w_data:
+            if "BUY" in w_data['Signal']:
+                trade = calculate_trade(w_data['Price'], w_data['ATR'], "LONG", "Swing", risk_reward)
+                st.success("📈 LONG")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
+                
+            elif "SELL" in w_data['Signal']:
+                trade = calculate_trade(w_data['Price'], w_data['ATR'], "SHORT", "Swing", risk_reward)
+                st.error("📉 SHORT")
+                st.write(f"**Entry:** ${trade['entry']:,.2f}")
+                st.write(f"🎯 **TP:** ${trade['tp']:,.2f} (+{trade['reward_pct']:.2f}%)")
+                st.write(f"🛑 **SL:** ${trade['sl']:,.2f} (-{trade['risk_pct']:.2f}%)")
+                
+                risk_amount = position_size * (trade['risk_pct'] / 100)
+                st.caption(f"💰 Risk: ${risk_amount:.2f}")
             else:
-                st.info("⏸ No Setup")
+                st.info("⏸️ No Setup")
+                st.caption(f"Score: {w_data['Score']}/100")
 
-    return all_sigs
 
-
-def render_chart(datasets: dict):
-    """Advanced chart: Candles + EMAs + BB + Volume Profile + RSI + MACD + Volume."""
-    st.subheader("📈 Advanced Chart (1H) + Volume Profile + Full Indicator Suite")
-    df = add_indicators(datasets['1h'])
-    vp = volume_profile(df)
-
+def render_advanced_chart(data_sets):
+    """Renders the advanced technical chart with volume profile"""
+    st.subheader("📈 Advanced Price Chart (1H) + Volume Profile")
+    
+    chart_df = add_indicators(data_sets['1h'])
+    volume_profile = calculate_volume_profile(chart_df)
+    
+    from plotly.subplots import make_subplots
+    
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.55, 0.15, 0.15, 0.15],
-        subplot_titles=('Price + Indicators', 'RSI', 'MACD', 'Volume')
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.6, 0.2, 0.2],
+        subplot_titles=('Price Action + Volume Profile', 'RSI', 'MACD')
     )
-
-    # Candlesticks
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close'], name="Price",
-        increasing_line_color='#00e676', decreasing_line_color='#ff5252',
-    ), row=1, col=1)
-
+    
+    # Candlestick
+    fig.add_trace(
+        go.Candlestick(
+            x=chart_df.index,
+            open=chart_df['Open'],
+            high=chart_df['High'],
+            low=chart_df['Low'],
+            close=chart_df['Close'],
+            name="Price"
+        ),
+        row=1, col=1
+    )
+    
     # EMAs
-    ema_cfg = [('EMA9','#ffeb3b',1),('EMA21','#ff9800',1.5),
-               ('EMA50','#2196f3',2),('EMA200','#ffffff',2)]
-    for name, color, width in ema_cfg:
-        if name in df.columns:
-            fig.add_trace(go.Scatter(x=df.index, y=df[name], name=name,
-                line=dict(color=color, width=width), opacity=0.8), row=1, col=1)
-
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['EMA9'], name="EMA 9", line=dict(color='yellow', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['EMA21'], name="EMA 21", line=dict(color='orange', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['EMA50'], name="EMA 50", line=dict(color='blue', width=2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['EMA200'], name="EMA 200", line=dict(color='white', width=2)), row=1, col=1)
+    
     # Bollinger Bands
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='BB Upper',
-        line=dict(color='#607d8b', width=1, dash='dot'), opacity=0.6), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='BB Lower',
-        line=dict(color='#607d8b', width=1, dash='dot'),
-        fill='tonexty', fillcolor='rgba(96,125,139,0.05)', opacity=0.6), row=1, col=1)
-
-    # Supertrend
-    if 'Supertrend' in df.columns:
-        bull_st = df['Supertrend'].where(df['Supertrend_Dir'] == 1)
-        bear_st = df['Supertrend'].where(df['Supertrend_Dir'] == -1)
-        fig.add_trace(go.Scatter(x=df.index, y=bull_st, name='Supertrend ▲',
-            line=dict(color='#00e676', width=2), mode='lines'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=bear_st, name='Supertrend ▼',
-            line=dict(color='#ff5252', width=2), mode='lines'), row=1, col=1)
-
-    # VWAP
-    if 'VWAP' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name='VWAP',
-            line=dict(color='#e040fb', width=1.5, dash='dash'), opacity=0.9), row=1, col=1)
-
-    # Volume Profile lines
-    if vp:
-        fig.add_hline(y=vp['poc'], line_color='#00bcd4', line_width=2,
-            annotation_text="POC", annotation_position="right", row=1, col=1)
-        fig.add_hrect(y0=vp['va_low'], y1=vp['va_high'],
-            fillcolor='rgba(0,188,212,0.07)', line_width=0, row=1, col=1)
-
-    # Pivot levels
-    if 'R1' in df.columns:
-        for lv, lbl, clr in [('R1','R1','#ef5350'),('S1','S1','#66bb6a'),
-                              ('R2','R2','#e53935'),('S2','S2','#388e3c')]:
-            fig.add_hline(y=df[lv].iloc[-1], line_color=clr, line_width=1,
-                line_dash='dot', annotation_text=lbl, row=1, col=1)
-
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], name="BB Upper", line=dict(color='gray', dash='dash', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], name="BB Lower", line=dict(color='gray', dash='dash', width=1)), row=1, col=1)
+    
+    # Volume Profile (NEW!)
+    if volume_profile:
+        # Add POC line
+        fig.add_hline(
+            y=volume_profile['poc'],
+            line_dash="solid",
+            line_color="cyan",
+            line_width=2,
+            annotation_text="POC",
+            row=1, col=1
+        )
+        
+        # Add Value Area
+        fig.add_hrect(
+            y0=volume_profile['va_low'],
+            y1=volume_profile['va_high'],
+            fillcolor="rgba(0, 255, 255, 0.1)",
+            line_width=0,
+            annotation_text="Value Area",
+            row=1, col=1
+        )
+    
     # RSI
-    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI',
-        line=dict(color='#ab47bc', width=1.5)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['RSI_EMA'], name='RSI Signal',
-        line=dict(color='#ffa726', width=1, dash='dash')), row=2, col=1)
-    for lvl, clr in [(70,'red'),(30,'green'),(50,'gray')]:
-        fig.add_hline(y=lvl, line_dash='dash', line_color=clr, opacity=0.4, row=2, col=1)
-
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['RSI'], name="RSI", line=dict(color='purple')), row=2, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+    
     # MACD
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='MACD',
-        line=dict(color='#2196f3')), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD_Sig'], name='Signal',
-        line=dict(color='#ff9800')), row=3, col=1)
-    colors = ['#00e676' if v >= 0 else '#ff5252' for v in df['MACD_Hist']]
-    fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histogram',
-        marker_color=colors, opacity=0.7), row=3, col=1)
-
-    # Volume
-    vcol = ['#00e676' if df['Close'].iloc[i] >= df['Open'].iloc[i] else '#ff5252'
-            for i in range(len(df))]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume',
-        marker_color=vcol, opacity=0.6), row=4, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Volume_MA'], name='Vol MA',
-        line=dict(color='white', width=1)), row=4, col=1)
-
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['MACD'], name="MACD", line=dict(color='blue')), row=3, col=1)
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['Signal'], name="Signal", line=dict(color='orange')), row=3, col=1)
+    fig.add_trace(go.Bar(x=chart_df.index, y=chart_df['MACD_Hist'], name="Histogram"), row=3, col=1)
+    
     fig.update_layout(
-        height=900, template='plotly_dark',
+        height=800,
         xaxis_rangeslider_visible=False,
-        showlegend=True, hovermode='x unified',
-        legend=dict(orientation='h', y=1.02, x=0),
-        margin=dict(l=40, r=40, t=40, b=20),
+        template="plotly_dark",
+        showlegend=True,
+        hovermode='x unified'
     )
+    
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_confluence_panel(symbol: str, datasets: dict, news: list):
-    """Full institutional confluence panel."""
-    st.subheader("🎯 Institutional Confluence Analysis")
+def render_news_feed():
+    """Renders the live news feed"""
+    st.subheader("📰 Live Crypto & Finance News")
+    
+    news_items = get_crypto_news()
+    
+    if news_items:
+        news_cols = st.columns(2)
+        for idx, item in enumerate(news_items[:8]):
+            with news_cols[idx % 2]:
+                st.markdown(f"""
+                <div class="news-item">
+                    <div style="font-weight: bold; margin-bottom: 5px;">{item['title']}</div>
+                    <div style="font-size: 12px; color: #888;">{item['published']}</div>
+                    <a href="{item['link']}" target="_blank" style="font-size: 12px; color: #fca311;">Read more →</a>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("News feed temporarily unavailable.")
 
-    df1h = add_indicators(datasets['1h'])
-    df15 = add_indicators(datasets['15m'])
+# ============================================
+# MAIN APPLICATION
+# ============================================
 
-    regime = detect_regime(df1h)
-    order_flow = detect_order_flow(df15)
-    vp = volume_profile(df1h)
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Trading Settings")
 
-    # Scores
-    regime_score = {'High': 80, 'Medium': 55, 'Low': 30}.get(regime['confidence'] if regime else 'Low', 50)
-    of_strength = order_flow['strength']
-    of_score = max(0, min(100, 50 + of_strength * 10))
+# View Mode Selection
+view_mode = st.sidebar.radio(
+    "📊 View Mode",
+    ["Single Asset", "Multi-Asset Comparison"],
+    index=0 if st.session_state.view_mode == "Single Asset" else 1
+)
+st.session_state.view_mode = view_mode
 
-    sig1h = generate_signal(df1h, '1h')
-    tech_score = sig1h['Score'] if sig1h else 50
+st.sidebar.divider()
 
-    news_score = 50  # Default neutral sentiment
-    bullish_kw = ['surge','rally','bullish','gain','rise','adoption','partnership']
-    bearish_kw = ['crash','drop','decline','bearish','ban','fear','liquidation']
-    for item in news[:6]:
-        title = item['title'].lower()
-        b = sum(1 for w in bullish_kw if w in title)
-        d = sum(1 for w in bearish_kw if w in title)
-        news_score += (b - d) * 6
-    news_score = max(0, min(100, news_score))
+# Asset selection based on view mode
+if view_mode == "Single Asset":
+    symbol = st.sidebar.text_input(
+        "Asset Symbol", 
+        value=st.session_state.current_symbol,
+        key="single_symbol_input"
+    ).upper()
+    # Update session state
+    if symbol:
+        st.session_state.current_symbol = symbol
+else:
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        symbol_1 = st.sidebar.text_input(
+            "Asset 1", 
+            value=st.session_state.symbol_1,
+            key="symbol_1_input"
+        ).upper()
+        if symbol_1:
+            st.session_state.symbol_1 = symbol_1
+    with col2:
+        symbol_2 = st.sidebar.text_input(
+            "Asset 2", 
+            value=st.session_state.symbol_2,
+            key="symbol_2_input"
+        ).upper()
+        if symbol_2:
+            st.session_state.symbol_2 = symbol_2
 
-    confluence = (tech_score * 0.40 + regime_score * 0.25 +
-                  of_score * 0.20 + news_score * 0.15)
+st.sidebar.divider()
 
-    # Display
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        if confluence >= 78:
-            st.success(f"### 🏆 CONFLUENCE: {confluence:.1f} / 100 — INSTITUTIONAL GRADE")
-        elif confluence >= 63:
-            st.info(f"### ✅ CONFLUENCE: {confluence:.1f} / 100 — HIGH QUALITY")
-        elif confluence >= 50:
-            st.warning(f"### ⚠️ CONFLUENCE: {confluence:.1f} / 100 — MODERATE")
-        else:
-            st.error(f"### ❌ CONFLUENCE: {confluence:.1f} / 100 — LOW QUALITY")
+# Manual Refresh Button
+if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
+    st.session_state.last_refresh = datetime.now()
+    st.rerun()
 
-    with c2:
-        st.metric("Market Regime", regime['regime'] if regime else "N/A")
-        st.caption(regime['strategy'] if regime else '')
+# Auto-refresh toggle
+st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.auto_refresh)
 
-    with c3:
-        st.metric("Order Flow", order_flow['classification'])
-        st.caption(f"Strength: {of_strength:+d}")
+st.sidebar.divider()
 
-    # Breakdown
-    st.markdown("**Score Breakdown (Weighted)**")
-    bc = st.columns(4)
-    for col, (label, val, wt) in zip(bc, [
-        ("📈 Technical (40%)", tech_score, 0.40),
-        ("🎯 Regime (25%)",    regime_score, 0.25),
-        ("💼 Order Flow (20%)", of_score, 0.20),
-        ("📰 Sentiment (15%)", news_score, 0.15),
-    ]):
-        with col:
-            st.markdown(f"**{label}**")
-            st.progress(val / 100)
-            st.caption(f"{val:.0f}/100")
+# Mobile Mode Toggle
+st.session_state.mobile_mode = st.sidebar.checkbox("📱 Mobile Mode (Simplified)", value=st.session_state.mobile_mode)
 
-    # Volume Profile detail
-    if vp:
-        st.divider()
-        price = df1h['Close'].iloc[-1]
-        vp_c1, vp_c2, vp_c3 = st.columns(3)
-        vp_c1.metric("POC (Max Volume)", f"${vp['poc']:,.2f}")
-        vp_c2.metric("Value Area Low",   f"${vp['va_low']:,.2f}")
-        vp_c3.metric("Value Area High",  f"${vp['va_high']:,.2f}")
-        if vp['va_low'] <= price <= vp['va_high']:
-            st.success("✅ Price inside Value Area – Fair Value Zone")
-        elif price > vp['va_high']:
-            st.warning("⚠️ Price above Value Area – Premium Zone")
-        else:
-            st.info("💡 Price below Value Area – Discount Zone (potential buy)")
+st.sidebar.divider()
 
-    # Alert check
-    if confluence >= st.session_state.alert_threshold:
-        st.balloons()
-        st.success(f"🔔 **ALERT!** Confluence {confluence:.1f}% exceeded threshold "
-                   f"({st.session_state.alert_threshold}%) — Institutional-grade setup detected!")
+# Alert Settings
+st.sidebar.subheader("🔔 Alert Settings")
+st.session_state.alert_threshold = st.sidebar.slider(
+    "Confluence Alert Threshold", 
+    50, 100, st.session_state.alert_threshold,
+    help="Get notified when Sentiment + Technical confluence exceeds this %"
+)
 
+if st.sidebar.button("Test Alert 🔔", use_container_width=True):
+    st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
 
-def render_news():
-    st.subheader("📰 Live Market News")
-    news = get_news()
-    c1, c2 = st.columns(2)
-    for i, item in enumerate(news[:8]):
-        with (c1 if i % 2 == 0 else c2):
-            st.markdown(f"""
-            <div class="news-item">
-                <b>{item['title']}</b><br>
-                <small style="color:#888">{item['pub']}</small>
-                <a href="{item['link']}" target="_blank" style="color:#fca311;font-size:12px;"> Read →</a>
+st.sidebar.divider()
+
+# Backtest Section
+st.sidebar.subheader("🧪 Backtest & Validation")
+if st.sidebar.button("📊 Run Backtest", use_container_width=True):
+    st.session_state.show_backtest = not st.session_state.show_backtest
+    st.rerun()
+
+if st.session_state.show_backtest:
+    st.sidebar.success("✅ Backtest results visible below")
+else:
+    st.sidebar.info("Click to view prediction accuracy")
+
+st.sidebar.divider()
+
+# Popular Assets Quick Select
+st.sidebar.subheader("⚡ Quick Select")
+quick_assets = {
+    'BTC': 'BTC-USD',
+    'Gold': 'GC=F',
+    'Silver': 'SI=F',
+    'DXY': 'DX-Y.NYB',
+    'XRP': 'XRP-USD',
+    'ETH': 'ETH-USD',
+    'S&P500': '^GSPC',
+    'Oil': 'CL=F'
+}
+
+cols = st.sidebar.columns(2)
+for idx, (name, ticker) in enumerate(quick_assets.items()):
+    with cols[idx % 2]:
+        if st.button(name, use_container_width=True, key=f"quick_{ticker}"):
+            if view_mode == "Single Asset":
+                st.session_state.current_symbol = ticker
+                st.rerun()
+            else:
+                # In multi-asset mode, set to symbol_1
+                st.session_state.symbol_1 = ticker
+                st.rerun()
+
+st.sidebar.divider()
+
+# Risk settings
+st.sidebar.subheader("Risk Management")
+risk_reward = st.sidebar.slider("Risk:Reward Ratio", 1.0, 3.0, 1.5, 0.5)
+position_size = st.sidebar.number_input("Position Size ($)", min_value=100, value=1000, step=100)
+
+st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%S')}")
+
+# --- MAIN DASHBOARD ---
+st.title(f"📊 Ultimate AI Trading Dashboard")
+
+# --- LIVE PRICE TICKER ---
+st.subheader("🌐 Live Market Feed")
+live_prices = get_live_prices()
+
+ticker_cols = st.columns(5)
+for idx, (name, data) in enumerate(live_prices.items()):
+    with ticker_cols[idx]:
+        color = "green" if data['change'] >= 0 else "red"
+        st.markdown(f"""
+        <div class="price-ticker" style="border-left-color: {color};">
+            <div style="font-size: 12px; color: #888;">{name}</div>
+            <div style="font-size: 18px; font-weight: bold;">${data['price']:,.2f}</div>
+            <div style="font-size: 14px; color: {color};">
+                {'▲' if data['change'] >= 0 else '▼'} {abs(data['change']):.2f}%
             </div>
-            """, unsafe_allow_html=True)
-
-
-def render_live_ticker(symbols: list):
-    """Top-of-page live price ticker bar."""
-    cols = st.columns(len(symbols))
-    for col, sym in zip(cols, symbols):
-        data = get_ticker_price(sym)
-        color = "#00e676" if data['change'] >= 0 else "#ff5252"
-        arrow = "▲" if data['change'] >= 0 else "▼"
-        col.markdown(f"""
-        <div class="ticker-wrap" style="border-left:3px solid {color};">
-            <div class="ticker-name">{sym}</div>
-            <div class="ticker-price">${data['price']:,.4f}</div>
-            <div style="color:{color};font-size:13px;">{arrow} {abs(data['change']):.2f}%</div>
         </div>
         """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════
-# ═══════════  MAIN APP  ══════════════════════
-# ══════════════════════════════════════════════
-
-# ─── SIDEBAR ─────────────────────────────────
-st.sidebar.title("⚙️ Settings")
-
-# API Keys
-with st.sidebar.expander("🔑 Binance API (Optional)"):
-    st.session_state.api_key    = st.text_input("API Key",    value=st.session_state.api_key,    type="password")
-    st.session_state.api_secret = st.text_input("API Secret", value=st.session_state.api_secret, type="password")
-    if not st.session_state.api_key:
-        st.caption("ℹ️ No key needed for public market data.")
-
-# View mode
-view_mode = st.sidebar.radio("View Mode", ["Single Asset", "Multi-Asset"], index=0)
-
-# Quick symbols
-st.sidebar.markdown("**⚡ Quick Select**")
-QUICK = {
-    'BTC':    'BTC/USDT',
-    'ETH':    'ETH/USDT',
-    'SOL':    'SOL/USDT',
-    'BNB':    'BNB/USDT',
-    'XRP':    'XRP/USDT',
-    'DOGE':   'DOGE/USDT',
-    'ADA':    'ADA/USDT',
-    'AVAX':   'AVAX/USDT',
-    'Gold':   'XAU/USDT',
-    'Silver': 'XAG/USDT',
-}
-qs_cols = st.sidebar.columns(2)
-for i, (name, ticker) in enumerate(QUICK.items()):
-    with qs_cols[i % 2]:
-        if st.button(name, key=f"qs_{ticker}", use_container_width=True):
-            if view_mode == "Single Asset":
-                st.session_state.current_symbol = ticker
-            else:
-                st.session_state.symbol_1 = ticker
-            st.rerun()
-
-st.sidebar.divider()
-
-if view_mode == "Single Asset":
-    symbol = st.sidebar.text_input("Symbol", value=st.session_state.current_symbol).upper()
-    st.session_state.current_symbol = symbol
-else:
-    st.session_state.symbol_1 = st.sidebar.text_input("Asset 1", value=st.session_state.symbol_1).upper()
-    st.session_state.symbol_2 = st.sidebar.text_input("Asset 2", value=st.session_state.symbol_2).upper()
-
-st.sidebar.divider()
-
-# Risk
-st.sidebar.subheader("💰 Risk Management")
-rr         = st.sidebar.slider("Risk : Reward", 1.0, 4.0, 2.0, 0.5)
-pos_size   = st.sidebar.number_input("Position Size ($)", 100, 1_000_000, 1000, 100)
-
-# Alerts
-st.sidebar.divider()
-st.sidebar.subheader("🔔 Alerts")
-st.session_state.alert_threshold = st.sidebar.slider("Confluence Alert %", 50, 100, 85)
-
-# Refresh
-st.sidebar.divider()
-st.session_state.auto_refresh = st.sidebar.checkbox("Auto Refresh (60s)", value=st.session_state.auto_refresh)
-if st.sidebar.button("🔄 Refresh Now", use_container_width=True):
-    st.rerun()
-st.sidebar.caption(f"Last: {st.session_state.last_refresh.strftime('%H:%M:%S')}")
-
-if not CCXT_AVAILABLE:
-    st.sidebar.warning("⚠️ CCXT not installed.\n`pip install ccxt`\nUsing demo data.")
-
-# ─── HEADER ─────────────────────────────────
-st.markdown("# 🏛️ Institutional AI Trading Platform")
-st.caption(f"Powered by CCXT (Binance) · {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-
-TICKER_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XAU/USDT', 'XAG/USDT']
-render_live_ticker(TICKER_SYMBOLS)
 st.divider()
 
-# ─── MAIN CONTENT ────────────────────────────
-def full_asset_page(symbol: str):
-    st.subheader(f"📊 {symbol}")
+# ========================================
+# CONDITIONAL RENDERING BASED ON VIEW MODE
+# ========================================
 
-    with st.spinner(f"Loading {symbol} data from Binance..."):
-        datasets = get_all_datasets(symbol)
-
-    if not datasets:
-        st.error("❌ Could not load data. Check symbol or try again."); return
-
-    news = get_news()
-
-    # ═══════════════════════════════════════════
-    # 🔝  SIGNALS ON TOP  (highest priority)
-    # ═══════════════════════════════════════════
-    st.markdown("## 🎯 Live Trading Signals")
-
-    # 15m scalp
-    scalp = generate_15m_scalp_signal(datasets['15m'], datasets['1h'])
-    # Master signals
-    masters = calc_master_signal(datasets, scalp)
-
-    render_master_signal_cards(masters)
-    st.divider()
-    render_scalp_detail(scalp)
-    st.divider()
-
-    # ═══════════════════════════════════════════
-    # CONFLICT CHECK
-    # ═══════════════════════════════════════════
-    all_sigs_for_conflict = {}
-    for tf in ['15m', '1h', '4h']:
-        df = add_indicators(datasets[tf])
-        all_sigs_for_conflict[tf] = generate_signal(df, tf)
-    conflict = detect_conflicts(datasets, all_sigs_for_conflict)
-    render_conflict_panel(conflict)
-    st.divider()
-
-    # ═══════════════════════════════════════════
-    # CONFLUENCE
-    # ═══════════════════════════════════════════
-    render_confluence_panel(symbol, datasets, news)
-    st.divider()
-
-    # ═══════════════════════════════════════════
-    # TIMEFRAME SCANNER + TRADE SETUPS
-    # ═══════════════════════════════════════════
-    render_timeframe_scanner(datasets, rr, pos_size)
-    st.divider()
-
-    # ═══════════════════════════════════════════
-    # CHART
-    # ═══════════════════════════════════════════
-    render_chart(datasets)
-    st.divider()
-
-    # ═══════════════════════════════════════════
-    # NEWS
-    # ═══════════════════════════════════════════
-    render_news()
-
-
-# ─── ROUTING ─────────────────────────────────
 if view_mode == "Single Asset":
-    full_asset_page(st.session_state.current_symbol)
+    # ==================== SINGLE ASSET VIEW ====================
+    symbol = st.session_state.current_symbol
+    st.subheader(f"📈 Analysis: {symbol}")
+    
+    data_sets = get_data(symbol)
+    
+    if data_sets:
+        render_single_asset_view(data_sets, symbol, risk_reward, position_size)
+    else:
+        st.warning("⚠️ Unable to fetch data. Please check the ticker symbol and try again.")
 
 else:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        full_asset_page(st.session_state.symbol_1)
-    with col_b:
-        full_asset_page(st.session_state.symbol_2)
+    # ==================== MULTI-ASSET COMPARISON VIEW ====================
+    st.subheader(f"📊 Multi-Asset Comparison: {st.session_state.symbol_1} vs {st.session_state.symbol_2}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"### 📈 {st.session_state.symbol_1}")
+        data_1 = get_data(st.session_state.symbol_1)
+        if data_1:
+            render_compact_analysis(data_1, st.session_state.symbol_1, risk_reward, position_size)
+        else:
+            st.error(f"Unable to fetch data for {st.session_state.symbol_1}")
+    
+    with col2:
+        st.markdown(f"### 📈 {st.session_state.symbol_2}")
+        data_2 = get_data(st.session_state.symbol_2)
+        if data_2:
+            render_compact_analysis(data_2, st.session_state.symbol_2, risk_reward, position_size)
+        else:
+            st.error(f"Unable to fetch data for {st.session_state.symbol_2}")
 
-# ─── AUTO REFRESH ────────────────────────────
+# --- AUTO-REFRESH LOGIC ---
 if st.session_state.auto_refresh:
     time.sleep(60)
-    st.session_state.last_refresh = datetime.now()
+    st.rerun()
+
+
+# --- AUTO-REFRESH LOGIC ---
+if st.session_state.auto_refresh:
+    time.sleep(60)
     st.rerun()
