@@ -1365,15 +1365,36 @@ def predict_price_movement(df, timeframe):
     volatility_factor = min(atr / curr_price, 0.1) * 100
     adjusted_confidence = max(min(base_confidence - volatility_factor, 95), 30)
     
+    # Ensure TP/SL respect direction (use ATR for adaptive stops)
+    tp = None
+    sl = None
+    try:
+        if movement_pct < 0:
+            # Bearish: TP below current price, SL above
+            tp = min(weighted_prediction, lower_range)
+            sl = max(upper_range, curr_price + (atr * 1.0))
+        else:
+            # Bullish: TP above current price, SL below
+            tp = max(weighted_prediction, upper_range)
+            sl = min(lower_range, curr_price - (atr * 1.0))
+    except Exception:
+        tp = weighted_prediction
+        sl = curr_price - (atr if movement_pct > 0 else -atr)
+
+    direction_label = '📈 UP' if movement_pct > 0 else '📉 DOWN'
+    strength = 'Strong' if abs(movement_pct) > 1 else 'Moderate' if abs(movement_pct) > 0.3 else 'Weak'
+
     return {
         'current': curr_price,
         'predicted': weighted_prediction,
         'movement_pct': movement_pct,
         'upper_range': upper_range,
         'lower_range': lower_range,
+        'tp': tp,
+        'sl': sl,
         'confidence': adjusted_confidence,
-        'direction': '📈 UP' if movement_pct > 0 else '📉 DOWN',
-        'strength': 'Strong' if abs(movement_pct) > 1 else 'Moderate' if abs(movement_pct) > 0.3 else 'Weak',
+        'direction': direction_label,
+        'strength': strength,
         'method_predictions': predictions,
         'method_weights': weights,
         'adx': adx,
@@ -1947,6 +1968,47 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
             master_signals['swing']['reasons'].append("⚠️ Swing downgraded due to low volume (safeguard)")
     except Exception:
         pass
+
+    # --- Timeframe Hierarchy Filter ---
+    try:
+        sig_1h = analysis_results.get('1h')
+        if sig_1h and "SELL" in sig_1h.get('Signal', '') and sig_1h.get('Score', 0) >= 60:
+            # Cap lower timeframe signals to neutral/scalp-only
+            master_signals['scalping']['signal'] = "CAUTION"
+            master_signals['scalping']['confidence'] = "Low"
+            master_signals['scalping']['reasons'].append("⚠️ Lower TF capped due to strong 1h SELL (Timeframe Hierarchy)")
+            master_signals['intraday']['signal'] = "CAUTION"
+            master_signals['intraday']['confidence'] = "Low"
+            master_signals['intraday']['reasons'].append("⚠️ Intraday capped due to strong 1h SELL (Timeframe Hierarchy)")
+    except Exception:
+        pass
+
+    # --- RSI Overbought Exponential Penalty ---
+    try:
+        rsi_1h_val = float(curr_1h.get('RSI', 0))
+    except Exception:
+        rsi_1h_val = 0
+    try:
+        rsi_4h_val = float(curr_4h.get('RSI', 0))
+    except Exception:
+        rsi_4h_val = 0
+
+    top_rsi = max(rsi_1h_val, rsi_4h_val)
+    if top_rsi > 70:
+        # exponential penalty factor
+        penalty = np.exp(-(top_rsi - 70) / 4.0)
+        for key in ['scalping', 'intraday', 'swing']:
+            sig = master_signals.get(key)
+            if sig and 'BUY' in sig['signal']:
+                old_score = sig.get('score', 0)
+                new_score = old_score * penalty
+                master_signals[key]['score'] = new_score
+                master_signals[key]['reasons'].append(f"⚠️ RSI overbought ({top_rsi:.1f}) - exponential penalty applied (x{penalty:.2f})")
+                # Downgrade signal if score falls below thresholds
+                if new_score < 60:
+                    master_signals[key]['signal'] = 'CAUTION'
+                    master_signals[key]['confidence'] = 'Low'
+    
     
     return master_signals
 
@@ -2541,7 +2603,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="color: {text_color}; font-size: 18px;">Score: {scalp_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {scalp_sig['confidence']}</div>
             <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_5m['current']:,.2f} • TP: ${pred_5m['upper_range']:,.2f} • SL: ${pred_5m['lower_range']:,.2f}" if pred_5m else "Entry/TP/SL: N/A"}
+                {f"Entry: ${pred_5m['current']:,.2f} • TP: ${pred_5m.get('tp', pred_5m.get('upper_range')):,.2f} • SL: ${pred_5m.get('sl', pred_5m.get('lower_range')):,.2f}" if pred_5m else "Entry/TP/SL: N/A"}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2582,7 +2644,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="color: {text_color}; font-size: 18px;">Score: {intra_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {intra_sig['confidence']}</div>
             <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_1h['current']:,.2f} • TP: ${pred_1h['upper_range']:,.2f} • SL: ${pred_1h['lower_range']:,.2f}" if pred_1h else "Entry/TP/SL: N/A"}
+                {f"Entry: ${pred_1h['current']:,.2f} • TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f} • SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}" if pred_1h else "Entry/TP/SL: N/A"}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2623,7 +2685,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="color: {text_color}; font-size: 18px;">Score: {swing_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {swing_sig['confidence']}</div>
             <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_4h['current']:,.2f} • TP: ${pred_4h['upper_range']:,.2f} • SL: ${pred_4h['lower_range']:,.2f}" if pred_4h else "Entry/TP/SL: N/A"}
+                {f"Entry: ${pred_4h['current']:,.2f} • TP: ${pred_4h.get('tp', pred_4h.get('upper_range')):,.2f} • SL: ${pred_4h.get('sl', pred_4h.get('lower_range')):,.2f}" if pred_4h else "Entry/TP/SL: N/A"}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2668,8 +2730,8 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
                     Confidence: {pred_1h['confidence']:.1f}% | Range: ${pred_1h['lower_range']:,.2f} - ${pred_1h['upper_range']:,.2f}
                 </div>
                 <div style="display:flex; gap:10px; margin-top:12px;">
-                    <div class="key-metric" style="flex:1">TP: ${pred_1h['upper_range']:,.2f}</div>
-                    <div class="key-metric" style="flex:1">SL: ${pred_1h['lower_range']:,.2f}</div>
+                    <div class="key-metric" style="flex:1">TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f}</div>
+                    <div class="key-metric" style="flex:1">SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -3205,13 +3267,56 @@ for idx, (name, ticker) in enumerate(quick_assets.items()):
         if st.button(name, use_container_width=True, key=f"quick_{ticker}"):
             if view_mode == "Single Asset":
                 st.session_state.current_symbol = ticker
+                # Update the single symbol text_input widget state so it reflects the change
+                try:
+                    st.session_state['single_symbol_input'] = ticker
+                except Exception:
+                    pass
                 st.rerun()
             else:
-                # In multi-asset mode, set to symbol_1
+                # In multi-asset mode, set to symbol_1 and update widget
                 st.session_state.symbol_1 = ticker
+                try:
+                    st.session_state['symbol_1_input'] = ticker
+                except Exception:
+                    pass
                 st.rerun()
 
 st.sidebar.divider()
+
+# --- Full Asset Dropdown with Search ---
+st.sidebar.subheader("🔎 All Assets (Searchable)")
+assets_catalog = {
+    'Bitcoin': 'BTC-USD', 'Gold': 'GC=F', 'Silver': 'SI=F', 'DXY': 'DX-Y.NYB', 'XRP': 'XRP-USD',
+    'Ethereum': 'ETH-USD', 'S&P500': '^GSPC', 'Crude Oil': 'CL=F', 'Nasdaq': '^IXIC', 'TSLA': 'TSLA',
+    'AAPL': 'AAPL', 'MSFT': 'MSFT', 'AMZN': 'AMZN', 'NVDA': 'NVDA'
+}
+
+search_filter = st.sidebar.text_input("Filter assets", value="")
+options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
+if search_filter:
+    options = [o for o in options if search_filter.lower() in o.lower()]
+
+selected_asset = st.sidebar.selectbox("Choose asset", options, index=0 if not options else 0, key='asset_dropdown')
+if selected_asset:
+    # parse ticker
+    m = re.search(r"\(([^)]+)\)", selected_asset)
+    if m:
+        sel_ticker = m.group(1)
+        if view_mode == "Single Asset":
+            st.session_state.current_symbol = sel_ticker
+            try:
+                st.session_state['single_symbol_input'] = sel_ticker
+            except Exception:
+                pass
+            st.experimental_rerun()
+        else:
+            st.session_state.symbol_1 = sel_ticker
+            try:
+                st.session_state['symbol_1_input'] = sel_ticker
+            except Exception:
+                pass
+            st.experimental_rerun()
 
 # Risk settings
 st.sidebar.subheader("Risk Management")
