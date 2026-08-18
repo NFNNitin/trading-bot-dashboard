@@ -184,136 +184,136 @@ def get_crypto_news():
             {'title': 'Bitcoin continues strong momentum amid institutional adoption', 
 
 
-    def fetch_finnhub_events(api_key, days=1):
-        """Fetches macro economic events from Finnhub for today (best-effort).
-        Returns list of events with at least 'impact' and 'datetime' when available."""
-        try:
-            now = datetime.utcnow()
-            start = (now - timedelta(days=1)).strftime('%Y-%m-%d')
-            end = (now + timedelta(days=1)).strftime('%Y-%m-%d')
-            url = f"https://finnhub.io/api/v1/calendar/economic?from={start}&to={end}&token={api_key}"
-            r = requests.get(url, timeout=5)
-            data = r.json()
-            events = []
-            # Finnhub may return 'economic' or similar structure; be defensive
-            for key in ['economic', 'data', 'events']: 
-                items = data.get(key) if isinstance(data, dict) else None
-                if items:
-                    for ev in items:
-                        events.append(ev)
-                    break
-
-            # If top-level is list
-            if not events and isinstance(data, list):
-                events = data
-
-            return events
-        except Exception:
-            return []
-
-
-    def check_macro_blackout(finnhub_api_key, lookahead_minutes=15):
-        """Checks for high-impact macro events within ±lookahead_minutes."""
-        if not finnhub_api_key:
-            return False, None
-        events = fetch_finnhub_events(finnhub_api_key)
+def fetch_finnhub_events(api_key, days=1):
+    """Fetches macro economic events from Finnhub for today (best-effort).
+    Returns list of events with at least 'impact' and 'datetime' when available."""
+    try:
         now = datetime.utcnow()
-        for ev in events:
-            try:
-                # Try multiple common field names
-                tstr = ev.get('datetime') or ev.get('time') or ev.get('start') or ev.get('date')
-                impact = ev.get('impact') or ev.get('importance') or ev.get('priority')
-                if not tstr:
-                    continue
-                # parse various formats
-                try:
-                    ev_time = datetime.fromisoformat(tstr)
-                except Exception:
-                    try:
-                        ev_time = datetime.strptime(tstr, '%Y-%m-%d %H:%M:%S')
-                    except:
-                        continue
+        start = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+        end = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+        url = f"https://finnhub.io/api/v1/calendar/economic?from={start}&to={end}&token={api_key}"
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        events = []
+        # Finnhub may return 'economic' or similar structure; be defensive
+        for key in ['economic', 'data', 'events']: 
+            items = data.get(key) if isinstance(data, dict) else None
+            if items:
+                for ev in items:
+                    events.append(ev)
+                break
 
-                delta = abs((ev_time - now).total_seconds()) / 60.0
-                if delta <= lookahead_minutes and str(impact).lower() in ('high', '3', '3/3', 'major'):
-                    return True, ev
-            except Exception:
-                continue
+        # If top-level is list
+        if not events and isinstance(data, list):
+            events = data
+
+        return events
+    except Exception:
+        return []
+
+
+def check_macro_blackout(finnhub_api_key, lookahead_minutes=15):
+    """Checks for high-impact macro events within ±lookahead_minutes."""
+    if not finnhub_api_key:
         return False, None
-
-
-    def get_binance_imbalance(symbol, limit=20):
-        """Fetches Binance depth for crypto symbols and returns imbalance ratio (0..1).
-        Maps symbol like 'BTC-USD' or 'BTCUSD' to 'BTCUSDT' when possible."""
+    events = fetch_finnhub_events(finnhub_api_key)
+    now = datetime.utcnow()
+    for ev in events:
         try:
-            # Only support common crypto tickers
-            base = symbol.replace('-USD', '').replace('=F', '').replace('.', '').replace('^', '')
-            pair = f"{base}USDT"
-            url = f"https://api.binance.com/api/v3/depth?symbol={pair}&limit={limit}"
-            r = requests.get(url, timeout=3)
-            j = r.json()
-            bids = j.get('bids', [])
-            asks = j.get('asks', [])
-            bid_vol = sum(float(b[1]) for b in bids)
-            ask_vol = sum(float(a[1]) for a in asks)
-            if bid_vol + ask_vol == 0:
-                return None
-            imbalance = bid_vol / (bid_vol + ask_vol)
-            return imbalance
+            # Try multiple common field names
+            tstr = ev.get('datetime') or ev.get('time') or ev.get('start') or ev.get('date')
+            impact = ev.get('impact') or ev.get('importance') or ev.get('priority')
+            if not tstr:
+                continue
+            # parse various formats
+            try:
+                ev_time = datetime.fromisoformat(tstr)
+            except Exception:
+                try:
+                    ev_time = datetime.strptime(tstr, '%Y-%m-%d %H:%M:%S')
+                except:
+                    continue
+
+            delta = abs((ev_time - now).total_seconds()) / 60.0
+            if delta <= lookahead_minutes and str(impact).lower() in ('high', '3', '3/3', 'major'):
+                return True, ev
         except Exception:
+            continue
+    return False, None
+
+
+def get_binance_imbalance(symbol, limit=20):
+    """Fetches Binance depth for crypto symbols and returns imbalance ratio (0..1).
+    Maps symbol like 'BTC-USD' or 'BTCUSD' to 'BTCUSDT' when possible."""
+    try:
+        # Only support common crypto tickers
+        base = symbol.replace('-USD', '').replace('=F', '').replace('.', '').replace('^', '')
+        pair = f"{base}USDT"
+        url = f"https://api.binance.com/api/v3/depth?symbol={pair}&limit={limit}"
+        r = requests.get(url, timeout=3)
+        j = r.json()
+        bids = j.get('bids', [])
+        asks = j.get('asks', [])
+        bid_vol = sum(float(b[1]) for b in bids)
+        ask_vol = sum(float(a[1]) for a in asks)
+        if bid_vol + ask_vol == 0:
             return None
+        imbalance = bid_vol / (bid_vol + ask_vol)
+        return imbalance
+    except Exception:
+        return None
 
 
-    def detect_fvg_liquidity_msb(df):
-        """Detect simple Fair Value Gaps (FVG), liquidity sweeps, and MSB (market structure breaks).
-        Returns flags dict with boolean indicators and brief reasons."""
-        flags = {'fvg': False, 'liquidity_sweep': False, 'msb_bull': False, 'msb_bear': False, 'reasons': []}
-        if df is None or len(df) < 5:
-            return flags
-
-        try:
-            recent = df.tail(20).copy()
-            # FVG: look for gap between two non-adjacent candles (simple heuristic)
-            for i in range(2, len(recent)):
-                c0 = recent.iloc[i-2]
-                c1 = recent.iloc[i-1]
-                c2 = recent.iloc[i]
-                # Bullish FVG: low of c2 > high of c0 (gap up)
-                if c2['Low'] > c0['High'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
-                    flags['fvg'] = True
-                    flags['reasons'].append('FVG detected (gap up)')
-                    break
-                # Bearish FVG: high of c2 < low of c0 (gap down)
-                if c2['High'] < c0['Low'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
-                    flags['fvg'] = True
-                    flags['reasons'].append('FVG detected (gap down)')
-                    break
-
-            # Liquidity sweep: long wick below recent support then quick recovery
-            lows = recent['Low']
-            min_low_idx = lows.idxmin()
-            min_low_pos = list(recent.index).index(min_low_idx)
-            if min_low_pos >= 1 and min_low_pos < len(recent)-1:
-                sweep_candle = recent.iloc[min_low_pos]
-                after = recent.iloc[min_low_pos+1]
-                if (sweep_candle['Low'] < recent['Low'].quantile(0.05)) and (after['Close'] > sweep_candle['Open']):
-                    flags['liquidity_sweep'] = True
-                    flags['reasons'].append('Liquidity sweep detected (wick & recovery)')
-
-            # Simple MSB: compare last swing high/low
-            highs = recent['High']
-            lows = recent['Low']
-            if highs.iloc[-1] > highs.iloc[-3] and lows.iloc[-1] > lows.iloc[-3]:
-                flags['msb_bull'] = True
-                flags['reasons'].append('MSB bullish (higher highs/lows)')
-            if highs.iloc[-1] < highs.iloc[-3] and lows.iloc[-1] < lows.iloc[-3]:
-                flags['msb_bear'] = True
-                flags['reasons'].append('MSB bearish (lower highs/lows)')
-
-        except Exception:
-            pass
-
+def detect_fvg_liquidity_msb(df):
+    """Detect simple Fair Value Gaps (FVG), liquidity sweeps, and MSB (market structure breaks).
+    Returns flags dict with boolean indicators and brief reasons."""
+    flags = {'fvg': False, 'liquidity_sweep': False, 'msb_bull': False, 'msb_bear': False, 'reasons': []}
+    if df is None or len(df) < 5:
         return flags
+
+    try:
+        recent = df.tail(20).copy()
+        # FVG: look for gap between two non-adjacent candles (simple heuristic)
+        for i in range(2, len(recent)):
+            c0 = recent.iloc[i-2]
+            c1 = recent.iloc[i-1]
+            c2 = recent.iloc[i]
+            # Bullish FVG: low of c2 > high of c0 (gap up)
+            if c2['Low'] > c0['High'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
+                flags['fvg'] = True
+                flags['reasons'].append('FVG detected (gap up)')
+                break
+            # Bearish FVG: high of c2 < low of c0 (gap down)
+            if c2['High'] < c0['Low'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
+                flags['fvg'] = True
+                flags['reasons'].append('FVG detected (gap down)')
+                break
+
+        # Liquidity sweep: long wick below recent support then quick recovery
+        lows = recent['Low']
+        min_low_idx = lows.idxmin()
+        min_low_pos = list(recent.index).index(min_low_idx)
+        if min_low_pos >= 1 and min_low_pos < len(recent)-1:
+            sweep_candle = recent.iloc[min_low_pos]
+            after = recent.iloc[min_low_pos+1]
+            if (sweep_candle['Low'] < recent['Low'].quantile(0.05)) and (after['Close'] > sweep_candle['Open']):
+                flags['liquidity_sweep'] = True
+                flags['reasons'].append('Liquidity sweep detected (wick & recovery)')
+
+        # Simple MSB: compare last swing high/low
+        highs = recent['High']
+        lows = recent['Low']
+        if highs.iloc[-1] > highs.iloc[-3] and lows.iloc[-1] > lows.iloc[-3]:
+            flags['msb_bull'] = True
+            flags['reasons'].append('MSB bullish (higher highs/lows)')
+        if highs.iloc[-1] < highs.iloc[-3] and lows.iloc[-1] < lows.iloc[-3]:
+            flags['msb_bear'] = True
+            flags['reasons'].append('MSB bearish (lower highs/lows)')
+
+    except Exception:
+        pass
+
+    return flags
              'link': 'https://cointelegraph.com', 'published': 'Recent'},
             {'title': 'Gold prices surge on global economic uncertainty', 
              'link': 'https://www.reuters.com/markets/commodities', 'published': 'Recent'},
