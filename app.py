@@ -117,6 +117,26 @@ if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
+if 'meta_rule_blend' not in st.session_state:
+    st.session_state.meta_rule_blend = 0.6  # rule-based weight
+if 'confidence_threshold' not in st.session_state:
+    st.session_state.confidence_threshold = 55  # minimum score to issue BUY/SELL
+if 'meta_training_samples' not in st.session_state:
+    st.session_state.meta_training_samples = 80
+
+# Sidebar controls for model tuning
+with st.sidebar.expander('Model & Backtest Settings', expanded=False):
+    st.session_state.meta_rule_blend = st.slider('Rule-based weight (higher = more rule-driven)', 0.0, 1.0, st.session_state.meta_rule_blend, 0.05)
+    st.session_state.confidence_threshold = st.slider('Minimum confidence to issue BUY/SELL', 40, 90, st.session_state.confidence_threshold, 5)
+    st.session_state.meta_training_samples = st.number_input('Meta training samples', min_value=20, max_value=500, value=st.session_state.meta_training_samples, step=10)
+    if st.button('Retrain Meta-Ensemble Now'):
+        st.session_state.meta_models = {}
+        st.success('Meta-ensemble retrain scheduled on next render')
+    if st.button('Auto-tune blend weight'):
+        st.session_state.tune_blend = True
+    else:
+        if 'tune_blend' not in st.session_state:
+            st.session_state.tune_blend = False
 
 # --- LIVE PRICE FEED FOR MULTIPLE ASSETS ---
 def get_live_prices():
@@ -355,6 +375,29 @@ def detect_fvg_liquidity_msb(df):
         pass
 
     return flags
+
+
+def compute_cvd_approx(df, window=20):
+    """Approximate Cumulative Volume Delta using candle direction * volume.
+    Returns a normalized CVD between -1 and +1 for the window (negative = selling pressure).
+    This is an approximation when tick-level trades are not available.
+    """
+    try:
+        if df is None or len(df) < 2:
+            return 0.0
+        recent = df.tail(window).copy()
+        # direction: +1 if close>open, -1 if close<open, 0 otherwise
+        dir_signed = np.sign(recent['Close'] - recent['Open'])
+        vol = recent['Volume'].fillna(0).values
+        weighted = dir_signed.values * vol
+        total = np.sum(np.abs(vol))
+        if total == 0:
+            return 0.0
+        cvd = np.sum(weighted) / total
+        # clamp
+        return float(max(min(cvd, 1.0), -1.0))
+    except Exception:
+        return 0.0
     
     news_items = []
     
@@ -1336,6 +1379,96 @@ def generate_advanced_signal(df, timeframe_name):
     if velocity < 0 and normalized_score > 50:
         normalized_score = normalized_score * 0.6
         signals.append("⚠️ Short-term negative velocity detected - overriding EMA bias")
+
+    # --- DYNAMIC LOW-VOLUME BLACKOUT ---
+    try:
+        avg20 = float(df['Volume'].tail(20).mean())
+        if avg20 > 0 and curr['Volume'] < 0.5 * avg20:
+            # Reduce confidence by ~45% and mark as caution
+            normalized_score = normalized_score * 0.55
+            signals.append("⚠️ Low volume detected (<50% of 20-period avg) - downgrading signal")
+    except Exception:
+        pass
+
+    # --- CANDLE REVERSAL PENALTIES ---
+    try:
+        pattern = identify_candle(df)
+        if pattern and ('Bearish' in pattern or 'Evening Star' in pattern or 'Shooting Star' in pattern or 'Bearish Engulfing' in pattern):
+            # If currently bullish-biased, apply a severe negative multiplier to UP confidence
+            if normalized_score > 55:
+                normalized_score = normalized_score * 0.35
+                signals.append(f"⚠️ Strong bearish candle pattern detected ({pattern}) - applying severe UP penalty")
+        elif pattern and ('Bullish' in pattern or 'Morning Star' in pattern or 'Hammer' in pattern or 'Bullish Engulfing' in pattern):
+            # If currently bearish-biased, slightly reduce sell confidence
+            if normalized_score < 45:
+                normalized_score = normalized_score * 0.8
+                signals.append(f"✅ Bullish candle pattern detected ({pattern}) - reducing SELL bias")
+    except Exception:
+        pass
+
+    # --- HARD MULTI-TIMEFRAME TREND FILTER (1H / 4H) ---
+    try:
+        symbol = st.session_state.get('current_symbol', None)
+        if symbol and timeframe_name in ('5m', '15m'):
+            # Fetch higher timeframe EMAs
+            try:
+                t = yf.Ticker(symbol)
+                df_1h = t.history(period='7d', interval='60m')
+                df_4h = t.history(period='30d', interval='240m')
+                for _df in (df_1h, df_4h):
+                    if _df is None or _df.empty:
+                        raise Exception('empty')
+                # Compute EMAs safely
+                df_1h['EMA50'] = df_1h['Close'].ewm(span=50, adjust=False).mean()
+                df_1h['EMA200'] = df_1h['Close'].ewm(span=200, adjust=False).mean()
+                df_4h['EMA50'] = df_4h['Close'].ewm(span=50, adjust=False).mean()
+                df_4h['EMA200'] = df_4h['Close'].ewm(span=200, adjust=False).mean()
+
+                # Determine higher-timeframe trend flags
+                ht1_bull = (df_1h['EMA50'].iloc[-1] > df_1h['EMA200'].iloc[-1]) and (df_1h['Close'].iloc[-1] > df_1h['EMA50'].iloc[-1])
+                ht4_bull = (df_4h['EMA50'].iloc[-1] > df_4h['EMA200'].iloc[-1]) and (df_4h['Close'].iloc[-1] > df_4h['EMA50'].iloc[-1])
+                ht1_bear = (df_1h['EMA50'].iloc[-1] < df_1h['EMA200'].iloc[-1]) and (df_1h['Close'].iloc[-1] < df_1h['EMA50'].iloc[-1])
+                ht4_bear = (df_4h['EMA50'].iloc[-1] < df_4h['EMA200'].iloc[-1]) and (df_4h['Close'].iloc[-1] < df_4h['EMA50'].iloc[-1])
+
+                # If short TF suggests BUY but higher TF not bullish, penalize strongly
+                if normalized_score > 55 and not (ht1_bull and ht4_bull):
+                    normalized_score = normalized_score * 0.6
+                    signals.append('⚠️ Higher-timeframe trend not confirming BUY (hard filter applied)')
+                # If short TF suggests SELL but higher TF not bearish, penalize strongly
+                if normalized_score < 45 and not (ht1_bear and ht4_bear):
+                    normalized_score = normalized_score * 0.6
+                    signals.append('⚠️ Higher-timeframe trend not confirming SELL (hard filter applied)')
+            except Exception:
+                # If any fetch/compute fails, skip hard filter
+                pass
+    except Exception:
+        pass
+
+    # --- CUMULATIVE VOLUME DELTA (CVD) & ORDERBOOK IMBALANCE OVERRIDES ---
+    try:
+        # Approximate CVD from recent candles
+        cvd = compute_cvd_approx(df, window=20)
+        # Strong selling spike -> force Neutral/Down
+        if cvd < -0.4:
+            normalized_score = min(normalized_score, 30)
+            signals.append(f"⚠️ Aggressive selling detected (CVD={cvd:.2f}) - forcing Neutral/Down")
+        elif cvd > 0.4:
+            # Aggressive buying spike -> boost bullish confidence
+            normalized_score = max(normalized_score, 65)
+            signals.append(f"✅ Aggressive buying detected (CVD={cvd:.2f}) - boosting BUY")
+
+        # Use Binance orderbook imbalance for crypto-like symbols
+        if symbol and isinstance(symbol, str) and ('BTC' in symbol or 'ETH' in symbol or 'XRP' in symbol):
+            imb = get_binance_imbalance(symbol)
+            if imb is not None:
+                if imb < 0.35:
+                    normalized_score = min(normalized_score, 30)
+                    signals.append(f"⚠️ Orderbook imbalance bearish (imbalance={imb:.2f}) - overriding to Neutral/Down")
+                elif imb > 0.65:
+                    normalized_score = max(normalized_score, 65)
+                    signals.append(f"✅ Orderbook imbalance bullish (imbalance={imb:.2f}) - boosting BUY")
+    except Exception:
+        pass
     
     # Determine signal strength
     if normalized_score >= 75:
@@ -1565,6 +1698,117 @@ def predict_price_movement(df, timeframe):
         'adx': adx,
         'rsi': rsi
     }
+
+
+# --- META-ENSEMBLE TRAINER & PREDICTOR (STACKING) ---
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def train_meta_ensemble(df_full, timeframe, samples=120, horizon=1, alpha=0.1):
+    """Train a simple ridge stacking model using method predictions as features.
+    Returns dict with weights, feature_names and intercept.
+    """
+    X_list = []
+    y_list = []
+    method_names = None
+
+    # need at least samples + horizon + safety
+    n = len(df_full)
+    start = max(50, samples)  # skip early unstable region
+    # We'll sample up to last-1-horizon
+    for i in range(start, n - horizon):
+        try:
+            df_up = df_full.iloc[:i+1].copy()
+            df_up = add_indicators(df_up)
+            pred = predict_price_movement(df_up, timeframe)
+            if pred is None:
+                continue
+            methods = pred.get('method_predictions', {})
+            if not methods:
+                continue
+            curr_price = pred['current']
+            # build feature vector: pct movement predicted by each method
+            feats = []
+            names = []
+            for k, v in methods.items():
+                names.append(k)
+                feats.append(((v - curr_price) / curr_price))
+
+            # Additional features
+            feats.append(compute_cvd_approx(df_up, window=20))
+            feats.append(df_up['RSI'].iloc[-1])
+            feats.append(df_up['ADX'].iloc[-1])
+            feats.append(df_up['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in df_up.columns else 1.0)
+
+            # target: next candle up (1) or down (0)
+            future_close = df_full['Close'].iloc[i + horizon]
+            target = 1 if future_close > curr_price else 0
+
+            if method_names is None:
+                method_names = names
+            # ensure method order matches
+            if names != method_names:
+                # align by method_names if possible
+                aligned = []
+                for mn in method_names:
+                    aligned.append(feats[names.index(mn)]) if mn in names else aligned.append(0.0)
+                feats = aligned + feats[len(names):]
+
+            X_list.append(feats)
+            y_list.append(target)
+        except Exception:
+            continue
+
+        if len(y_list) >= samples:
+            break
+
+    if not X_list or len(y_list) < 10:
+        return None
+
+    X = np.array(X_list)
+    y = np.array(y_list).reshape(-1, 1)
+
+    # add intercept column
+    X_design = np.hstack([np.ones((X.shape[0], 1)), X])
+
+    # Ridge closed-form solution
+    I = np.eye(X_design.shape[1])
+    I[0, 0] = 0  # do not regularize intercept
+    try:
+        w = np.linalg.inv(X_design.T @ X_design + alpha * I) @ (X_design.T @ y)
+        w = w.flatten()
+    except np.linalg.LinAlgError:
+        w = np.linalg.lstsq(X_design, y, rcond=None)[0].flatten()
+
+    return {
+        'weights': w,  # intercept first
+        'method_names': method_names,
+        'n_features': X_design.shape[1]
+    }
+
+
+def meta_predict_from_model(pred_output, model):
+    """Given a predict_price_movement output and a trained model, return probability of UP."""
+    try:
+        methods = pred_output.get('method_predictions', {})
+        curr = pred_output['current']
+        feats = []
+        for mn in model['method_names']:
+            v = methods.get(mn, curr)
+            feats.append(((v - curr) / curr))
+        feats.append(compute_cvd_approx(pred_output.get('df', pd.DataFrame()), window=20) if isinstance(pred_output.get('df'), pd.DataFrame) else 0.0)
+        feats.append(pred_output.get('rsi', 50))
+        feats.append(pred_output.get('adx', 20))
+        feats.append(pred_output.get('volume_ratio', 1.0))
+
+        Xv = np.array([1.0] + feats)
+        w = model['weights']
+        score = float(Xv @ w)
+        prob = sigmoid(score)
+        return prob
+    except Exception:
+        return 0.5
 
 # --- 6. DIVERGENCE & CONFLICT DETECTION ---
 def detect_signal_conflicts(data_sets, analysis_results):
@@ -1896,6 +2140,45 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     
     master_signals['scalping']['score'] = scalp_normalized
     master_signals['scalping']['reasons'] = scalp_reasons
+
+    # Apply meta-ensemble correction for scalping (blend learned prediction)
+    try:
+        model = st.session_state.get('meta_models', {}).get('5m')
+        if model:
+            pred_out = predict_price_movement(df_5m.copy(), '5m')
+            pred_out['df'] = df_5m
+            pred_out['rsi'] = df_5m['RSI'].iloc[-1]
+            pred_out['adx'] = df_5m['ADX'].iloc[-1]
+            pred_out['volume_ratio'] = df_5m['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in df_5m.columns else 1.0
+            prob_up = meta_predict_from_model(pred_out, model)
+            meta_pct = prob_up * 100
+            # Blend: 60% rule-based, 40% model
+            rule_w = float(st.session_state.get('meta_rule_blend', 0.6))
+            meta_w = 1.0 - rule_w
+            scalp_normalized = scalp_normalized * rule_w + meta_pct * meta_w
+            master_signals['scalping']['reasons'].append(f"🤖 Meta-ensemble blended (prob_up={prob_up:.2f})")
+            master_signals['scalping']['score'] = scalp_normalized
+    except Exception:
+        pass
+
+    # --- META-ENSEMBLE: train lightweight models if not cached ---
+    try:
+        if 'meta_models' not in st.session_state:
+            st.session_state.meta_models = {}
+            # Train small models (may take a moment)
+            with st.spinner('Training lightweight meta-ensemble (this may take a few seconds)...'):
+                try:
+                    samples = int(st.session_state.get('meta_training_samples', 80))
+                    m5 = train_meta_ensemble(data_sets['5m'], '5m', samples=samples, horizon=1, alpha=0.5)
+                    m1 = train_meta_ensemble(data_sets['1h'], '1h', samples=samples, horizon=1, alpha=0.5)
+                    m4 = train_meta_ensemble(data_sets['4h'], '4h', samples=samples, horizon=1, alpha=0.5)
+                    st.session_state.meta_models['5m'] = m5
+                    st.session_state.meta_models['1h'] = m1
+                    st.session_state.meta_models['4h'] = m4
+                except Exception:
+                    st.session_state.meta_models = {}
+    except Exception:
+        pass
     
     # ============================================
     # INTRADAY SIGNAL (30m + 1h focus)
@@ -2012,6 +2295,25 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     master_signals['intraday']['score'] = intra_normalized
     master_signals['intraday']['reasons'] = intra_reasons
 
+    # Apply meta-ensemble correction for intraday (1h model)
+    try:
+        model1 = st.session_state.get('meta_models', {}).get('1h')
+        if model1:
+            pred_out1 = predict_price_movement(df_1h.copy(), '1h')
+            pred_out1['df'] = df_1h
+            pred_out1['rsi'] = df_1h['RSI'].iloc[-1]
+            pred_out1['adx'] = df_1h['ADX'].iloc[-1]
+            pred_out1['volume_ratio'] = df_1h['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in df_1h.columns else 1.0
+            prob_up1 = meta_predict_from_model(pred_out1, model1)
+            meta_pct1 = prob_up1 * 100
+            rule_w = float(st.session_state.get('meta_rule_blend', 0.6))
+            meta_w = 1.0 - rule_w
+            intra_normalized = intra_normalized * rule_w + meta_pct1 * meta_w
+            master_signals['intraday']['reasons'].append(f"🤖 Meta-ensemble blended (prob_up={prob_up1:.2f})")
+            master_signals['intraday']['score'] = intra_normalized
+    except Exception:
+        pass
+
     # Low-volume safeguard for intraday (1h)
     try:
         if curr_1h['Volume'] < (curr_1h['Volume_MA'] * 0.5):
@@ -2124,6 +2426,25 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     master_signals['swing']['score'] = swing_normalized
     master_signals['swing']['reasons'] = swing_reasons
 
+    # Apply meta-ensemble correction for swing (4h model)
+    try:
+        model4 = st.session_state.get('meta_models', {}).get('4h')
+        if model4:
+            pred_out4 = predict_price_movement(df_4h.copy(), '4h')
+            pred_out4['df'] = df_4h
+            pred_out4['rsi'] = df_4h['RSI'].iloc[-1]
+            pred_out4['adx'] = df_4h['ADX'].iloc[-1]
+            pred_out4['volume_ratio'] = df_4h['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in df_4h.columns else 1.0
+            prob_up4 = meta_predict_from_model(pred_out4, model4)
+            meta_pct4 = prob_up4 * 100
+            rule_w = float(st.session_state.get('meta_rule_blend', 0.6))
+            meta_w = 1.0 - rule_w
+            swing_normalized = swing_normalized * rule_w + meta_pct4 * meta_w
+            master_signals['swing']['reasons'].append(f"🤖 Meta-ensemble blended (prob_up={prob_up4:.2f})")
+            master_signals['swing']['score'] = swing_normalized
+    except Exception:
+        pass
+
     # Low-volume safeguard for swing (4h)
     try:
         if curr_4h['Volume'] < (curr_4h['Volume_MA'] * 0.5):
@@ -2173,8 +2494,21 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
                 if new_score < 60:
                     master_signals[key]['signal'] = 'CAUTION'
                     master_signals[key]['confidence'] = 'Low'
-    
-    
+
+    # Final confidence threshold enforcement (user-configurable)
+    try:
+        thresh = float(st.session_state.get('confidence_threshold', 55))
+        for key in ['scalping', 'intraday', 'swing']:
+            sig = master_signals.get(key)
+            if sig:
+                sc = float(sig.get('score', 0))
+                if sc < thresh:
+                    sig['reasons'].append(f"⚠️ Score below confidence threshold ({sc:.1f} < {thresh}) - downgrading to CAUTION")
+                    sig['signal'] = 'CAUTION'
+                    sig['confidence'] = 'Low'
+    except Exception:
+        pass
+
     return master_signals
 
 # --- 8. BACKTESTING ENGINE ---
@@ -2270,6 +2604,124 @@ def run_backtest(df, timeframe_name, periods_ahead=1):
     
     return results
 
+
+def tune_blend_weight_for_timeframe(df, timeframe, samples=10):
+    """Try several blend weights and return best blend based on direction accuracy."""
+    best = {'blend': st.session_state.meta_rule_blend, 'acc': 0}
+    weights = np.linspace(0.0, 1.0, 11)
+    for w in weights:
+        # run quick backtest using this blend
+        # temporarily set blend
+        original = st.session_state.meta_rule_blend
+        st.session_state.meta_rule_blend = w
+        try:
+            df_ind = add_indicators(df.copy())
+            res = run_backtest(df_ind, timeframe, periods_ahead=1)
+            if res and res['total_predictions'] > 0:
+                acc = res['direction_accuracy']
+                if acc > best['acc']:
+                    best = {'blend': w, 'acc': acc}
+        except Exception:
+            pass
+        finally:
+            st.session_state.meta_rule_blend = original
+    return best
+
+
+def walk_forward_cv(df, timeframe, train_window=500, test_window=50, step=50, horizon=1, samples_per_train=80):
+    """Performs walk-forward cross-validation for the meta-ensemble.
+    Returns a dict with per-fold and aggregated metrics.
+    - df: full historical dataframe with indicators
+    - train_window: number of candles used to train each fold
+    - test_window: number of candles for out-of-sample test per fold
+    - step: how far to move the window between folds
+    - horizon: prediction horizon (in candles)
+    """
+    n = len(df)
+    if n < train_window + test_window + 10:
+        return None
+
+    folds = []
+    start_idx = 0
+    while start_idx + train_window + test_window <= n:
+        train_idx_start = start_idx
+        train_idx_end = start_idx + train_window
+        test_idx_start = train_idx_end
+        test_idx_end = train_idx_end + test_window
+
+        train_df = df.iloc[train_idx_start:train_idx_end].copy()
+        test_df = df.iloc[test_idx_start:test_idx_end].copy()
+
+        # Train model on train_df
+        model = train_meta_ensemble(train_df, timeframe, samples=samples_per_train, horizon=horizon, alpha=0.5)
+
+        # Evaluate on test_df
+        y_true = []
+        y_pred_prob = []
+        y_pred_dir = []
+
+        # For each point in test, build historical slice up to that point (to avoid lookahead)
+        for i in range(test_idx_start, test_idx_end - horizon):
+            hist = df.iloc[:i+1].copy()
+            pred_out = predict_price_movement(hist, timeframe)
+            if pred_out is None or model is None:
+                continue
+            pred_out['df'] = hist
+            pred_out['rsi'] = hist['RSI'].iloc[-1] if 'RSI' in hist.columns else 50
+            pred_out['adx'] = hist['ADX'].iloc[-1] if 'ADX' in hist.columns else 20
+            prob_up = meta_predict_from_model(pred_out, model)
+
+            current_price = pred_out['current']
+            future_price = df['Close'].iloc[i + horizon]
+            true_up = 1 if future_price > current_price else 0
+
+            y_true.append(true_up)
+            y_pred_prob.append(prob_up)
+            y_pred_dir.append(1 if prob_up >= 0.5 else 0)
+
+        # Compute metrics for this fold
+        if len(y_true) == 0:
+            start_idx += step
+            continue
+
+        y_true = np.array(y_true)
+        y_pred_prob = np.array(y_pred_prob)
+        y_pred_dir = np.array(y_pred_dir)
+
+        accuracy = float((y_pred_dir == y_true).mean()) * 100.0
+        brier = float(np.mean((y_pred_prob - y_true) ** 2))
+        avg_prob = float(y_pred_prob.mean())
+
+        folds.append({
+            'train_start': df.index[train_idx_start],
+            'train_end': df.index[train_idx_end-1],
+            'test_start': df.index[test_idx_start],
+            'test_end': df.index[test_idx_end-1],
+            'n': len(y_true),
+            'accuracy': accuracy,
+            'brier': brier,
+            'avg_prob': avg_prob
+        })
+
+        start_idx += step
+
+    # Aggregate
+    if not folds:
+        return None
+
+    accuracies = [f['accuracy'] for f in folds]
+    brierrs = [f['brier'] for f in folds]
+    avg_probs = [f['avg_prob'] for f in folds]
+
+    return {
+        'folds': folds,
+        'mean_accuracy': float(np.mean(accuracies)),
+        'std_accuracy': float(np.std(accuracies)),
+        'mean_brier': float(np.mean(brierrs)),
+        'mean_prob': float(np.mean(avg_probs)),
+        'n_folds': len(folds)
+    }
+
 def format_backtest_summary(backtest_results):
     """Creates a formatted summary of backtest results"""
     if not backtest_results or backtest_results['total_predictions'] == 0:
@@ -2355,6 +2807,27 @@ def render_backtest_results(data_sets, symbol):
             # Adjust periods_ahead based on timeframe
             periods = 1 if tf in ['5m', '15m'] else 1
             backtest_data[tf] = run_backtest(df, tf, periods_ahead=periods)
+
+    # Auto-tune blend weight if requested
+    if st.session_state.get('tune_blend', False):
+        with st.spinner('Auto-tuning blend weight (this may take a while)...'):
+            bests = []
+            for tf in timeframes:
+                df = data_sets[tf].copy()
+                try:
+                    df_ind = add_indicators(df)
+                    b = tune_blend_weight_for_timeframe(df_ind, tf, samples=8)
+                    bests.append(b)
+                except Exception:
+                    continue
+            # Choose blend that maximizes average accuracy
+            if bests:
+                blends = [b['blend'] for b in bests if b and 'blend' in b]
+                if blends:
+                    new_blend = float(np.mean(blends))
+                    st.session_state.meta_rule_blend = float(np.clip(new_blend, 0.0, 1.0))
+                    st.success(f"Auto-tune complete. New rule weight: {st.session_state.meta_rule_blend:.2f}")
+            st.session_state.tune_blend = False
     
     # Display summary cards
     st.markdown("### 📊 Accuracy by Timeframe")
@@ -2484,6 +2957,26 @@ def render_backtest_results(data_sets, symbol):
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
+        # Walk-forward CV option
+        st.markdown("---")
+        if st.button('Run Walk-Forward CV'):
+            with st.spinner('Running walk-forward cross-validation...'):
+                df_for_cv = add_indicators(data_sets[selected_tf].copy())
+                cv_res = walk_forward_cv(df_for_cv, selected_tf, train_window=500, test_window=50, step=100, horizon=1, samples_per_train=int(st.session_state.get('meta_training_samples',80)))
+                if cv_res is None:
+                    st.error('Not enough data or model training failed for walk-forward CV')
+                else:
+                    st.success(f"Walk-forward CV completed: {cv_res['n_folds']} folds")
+                    st.write(f"Mean accuracy: {cv_res['mean_accuracy']:.2f}% (std: {cv_res['std_accuracy']:.2f})")
+                    st.write(f"Mean Brier score: {cv_res['mean_brier']:.4f}")
+                    df_folds = pd.DataFrame(cv_res['folds'])
+                    st.dataframe(df_folds)
+                    try:
+                        import plotly.express as px
+                        fig2 = px.line(df_folds, x='test_start', y='accuracy', title='Walk-Forward Fold Accuracy (%)')
+                        st.plotly_chart(fig2, use_container_width=True)
+                    except Exception:
+                        pass
         
         st.divider()
         
