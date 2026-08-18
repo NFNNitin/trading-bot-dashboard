@@ -6,6 +6,7 @@ import pickle
 import json
 import os
 import plotly.graph_objects as go
+import plotly.io as pio
 from datetime import datetime, timedelta
 import time
 from scipy import stats
@@ -118,6 +119,65 @@ if 'sentiment_cache' not in st.session_state:
     st.session_state.sentiment_cache = {}
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
+
+# --- APPEARANCE / UX SETTINGS ---
+st.sidebar.subheader("Appearance & UX")
+compact_mode = st.sidebar.checkbox("Compact Cards", value=False, help="Reduce padding and font sizes for a denser layout")
+use_dark_theme = st.sidebar.checkbox("Dark Theme", value=True, help="Enable dark color scheme for panels")
+font_scale = st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=1)
+show_tooltips = st.sidebar.checkbox("Show Tooltips", value=True)
+
+if compact_mode:
+    st.markdown("""
+    <style>
+    .metric-card, .prediction-box, .price-ticker {padding:8px; border-radius:8px}
+    .prediction-box {padding:12px}
+    .price-ticker div {font-size:12px}
+    </style>
+    """, unsafe_allow_html=True)
+
+if not use_dark_theme:
+    st.markdown("""
+    <style>
+    body, .css-1d391kg {background: #fafafa !important; color: #111 !important}
+    .metric-card, .price-ticker, .prediction-box {background: #ffffff; color: #111}
+    </style>
+    """, unsafe_allow_html=True)
+
+if font_scale == 'Small':
+    st.markdown("""
+    <style>
+    body {font-size:13px}
+    </style>
+    """, unsafe_allow_html=True)
+elif font_scale == 'Large':
+    st.markdown("""
+    <style>
+    body {font-size:17px}
+    </style>
+    """, unsafe_allow_html=True)
+
+# plotly theme
+try:
+    if use_dark_theme:
+        pio.templates.default = 'plotly_dark'
+    else:
+        pio.templates.default = 'plotly'
+except Exception:
+    pass
+
+# Strict Master tunables
+st.sidebar.subheader('Strict Master Settings')
+min_meta_conf = st.sidebar.slider('Min Meta Confidence', 0.5, 0.95, 0.8, 0.05)
+min_rule_conf = st.sidebar.slider('Min Rule Confidence', 0.5, 0.95, 0.8, 0.05)
+tp_atr_mult = st.sidebar.slider('TP ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
+sl_atr_mult = st.sidebar.slider('SL ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
+if 'strict_params' not in st.session_state:
+    st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
+
+if st.sidebar.button('Apply Strict Settings'):
+    st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
+    st.sidebar.success('Applied strict master settings')
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 if 'meta_rule_blend' not in st.session_state:
@@ -2873,6 +2933,13 @@ def generate_master_strict_signal(df, timeframe, min_meta_conf=0.8, min_rule_con
     Returns dict with keys: signal ('UP'/'DOWN'/'NONE'), entry, tp, sl, confidence
     """
     try:
+        # override with session settings if available
+        sp = st.session_state.get('strict_params')
+        if sp:
+            min_meta_conf = float(sp.get('min_meta_conf', min_meta_conf))
+            min_rule_conf = float(sp.get('min_rule_conf', min_rule_conf))
+            tp_atr_mult = float(sp.get('tp_atr_mult', tp_atr_mult))
+            sl_atr_mult = float(sp.get('sl_atr_mult', sl_atr_mult))
         # require minimum history
         if df is None or len(df) < 30:
             return {'signal': 'NONE', 'confidence': 0.0}
