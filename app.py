@@ -182,6 +182,138 @@ def get_crypto_news():
             {'title': '📰 Install feedparser for live news: pip install feedparser', 
              'link': '#', 'published': 'Now'},
             {'title': 'Bitcoin continues strong momentum amid institutional adoption', 
+
+
+    def fetch_finnhub_events(api_key, days=1):
+        """Fetches macro economic events from Finnhub for today (best-effort).
+        Returns list of events with at least 'impact' and 'datetime' when available."""
+        try:
+            now = datetime.utcnow()
+            start = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+            end = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+            url = f"https://finnhub.io/api/v1/calendar/economic?from={start}&to={end}&token={api_key}"
+            r = requests.get(url, timeout=5)
+            data = r.json()
+            events = []
+            # Finnhub may return 'economic' or similar structure; be defensive
+            for key in ['economic', 'data', 'events']: 
+                items = data.get(key) if isinstance(data, dict) else None
+                if items:
+                    for ev in items:
+                        events.append(ev)
+                    break
+
+            # If top-level is list
+            if not events and isinstance(data, list):
+                events = data
+
+            return events
+        except Exception:
+            return []
+
+
+    def check_macro_blackout(finnhub_api_key, lookahead_minutes=15):
+        """Checks for high-impact macro events within ±lookahead_minutes."""
+        if not finnhub_api_key:
+            return False, None
+        events = fetch_finnhub_events(finnhub_api_key)
+        now = datetime.utcnow()
+        for ev in events:
+            try:
+                # Try multiple common field names
+                tstr = ev.get('datetime') or ev.get('time') or ev.get('start') or ev.get('date')
+                impact = ev.get('impact') or ev.get('importance') or ev.get('priority')
+                if not tstr:
+                    continue
+                # parse various formats
+                try:
+                    ev_time = datetime.fromisoformat(tstr)
+                except Exception:
+                    try:
+                        ev_time = datetime.strptime(tstr, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        continue
+
+                delta = abs((ev_time - now).total_seconds()) / 60.0
+                if delta <= lookahead_minutes and str(impact).lower() in ('high', '3', '3/3', 'major'):
+                    return True, ev
+            except Exception:
+                continue
+        return False, None
+
+
+    def get_binance_imbalance(symbol, limit=20):
+        """Fetches Binance depth for crypto symbols and returns imbalance ratio (0..1).
+        Maps symbol like 'BTC-USD' or 'BTCUSD' to 'BTCUSDT' when possible."""
+        try:
+            # Only support common crypto tickers
+            base = symbol.replace('-USD', '').replace('=F', '').replace('.', '').replace('^', '')
+            pair = f"{base}USDT"
+            url = f"https://api.binance.com/api/v3/depth?symbol={pair}&limit={limit}"
+            r = requests.get(url, timeout=3)
+            j = r.json()
+            bids = j.get('bids', [])
+            asks = j.get('asks', [])
+            bid_vol = sum(float(b[1]) for b in bids)
+            ask_vol = sum(float(a[1]) for a in asks)
+            if bid_vol + ask_vol == 0:
+                return None
+            imbalance = bid_vol / (bid_vol + ask_vol)
+            return imbalance
+        except Exception:
+            return None
+
+
+    def detect_fvg_liquidity_msb(df):
+        """Detect simple Fair Value Gaps (FVG), liquidity sweeps, and MSB (market structure breaks).
+        Returns flags dict with boolean indicators and brief reasons."""
+        flags = {'fvg': False, 'liquidity_sweep': False, 'msb_bull': False, 'msb_bear': False, 'reasons': []}
+        if df is None or len(df) < 5:
+            return flags
+
+        try:
+            recent = df.tail(20).copy()
+            # FVG: look for gap between two non-adjacent candles (simple heuristic)
+            for i in range(2, len(recent)):
+                c0 = recent.iloc[i-2]
+                c1 = recent.iloc[i-1]
+                c2 = recent.iloc[i]
+                # Bullish FVG: low of c2 > high of c0 (gap up)
+                if c2['Low'] > c0['High'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
+                    flags['fvg'] = True
+                    flags['reasons'].append('FVG detected (gap up)')
+                    break
+                # Bearish FVG: high of c2 < low of c0 (gap down)
+                if c2['High'] < c0['Low'] and (c1['High'] - c1['Low'])/ (c0['High'] - c0['Low'] + 1e-9) < 0.6:
+                    flags['fvg'] = True
+                    flags['reasons'].append('FVG detected (gap down)')
+                    break
+
+            # Liquidity sweep: long wick below recent support then quick recovery
+            lows = recent['Low']
+            min_low_idx = lows.idxmin()
+            min_low_pos = list(recent.index).index(min_low_idx)
+            if min_low_pos >= 1 and min_low_pos < len(recent)-1:
+                sweep_candle = recent.iloc[min_low_pos]
+                after = recent.iloc[min_low_pos+1]
+                if (sweep_candle['Low'] < recent['Low'].quantile(0.05)) and (after['Close'] > sweep_candle['Open']):
+                    flags['liquidity_sweep'] = True
+                    flags['reasons'].append('Liquidity sweep detected (wick & recovery)')
+
+            # Simple MSB: compare last swing high/low
+            highs = recent['High']
+            lows = recent['Low']
+            if highs.iloc[-1] > highs.iloc[-3] and lows.iloc[-1] > lows.iloc[-3]:
+                flags['msb_bull'] = True
+                flags['reasons'].append('MSB bullish (higher highs/lows)')
+            if highs.iloc[-1] < highs.iloc[-3] and lows.iloc[-1] < lows.iloc[-3]:
+                flags['msb_bear'] = True
+                flags['reasons'].append('MSB bearish (lower highs/lows)')
+
+        except Exception:
+            pass
+
+        return flags
              'link': 'https://cointelegraph.com', 'published': 'Recent'},
             {'title': 'Gold prices surge on global economic uncertainty', 
              'link': 'https://www.reuters.com/markets/commodities', 'published': 'Recent'},
@@ -2344,7 +2476,49 @@ def render_professional_confluence(data_sets, symbol, news_items):
     order_flow = detect_order_flow(df_5m)
     regime = detect_market_regime(df_1h)
     volume_profile = calculate_volume_profile(df_1h)
+
+    # Macro blackout check (uses Finnhub API key if provided in session state)
+    finnhub_key = st.session_state.get('finnhub_api_key') or ''
+    macro_blackout, ev = check_macro_blackout(finnhub_key, lookahead_minutes=15)
+
+    # Depth imbalance from Binance (for crypto-like symbols)
+    imbalance = get_binance_imbalance(symbol)
+
+    # FVG / Liquidity / MSB detectors
+    micro_flags = detect_fvg_liquidity_msb(df_5m)
+
     confluence = calculate_confluence_score(df_1h, sentiment, order_flow, regime)
+
+    # Apply macro blackout override
+    if macro_blackout:
+        st.error("MACRO BLACKOUT: AI Signals Paused Due to High Volatility News Event")
+        confluence['total_score'] = 0
+        confluence['breakdown']['Sentiment'] = "0/100"
+
+    # Apply order-book imbalance adjustments
+    if imbalance is not None:
+        try:
+            if imbalance > 0.65:
+                # bullish depth - boost order_flow component
+                confluence['total_score'] = min(100, confluence['total_score'] + 8)
+                confluence['breakdown']['Order Flow'] = f"{min(100, float(confluence['component_scores'].get('order_flow',0))*100 + 8):.0f}/100"
+            elif imbalance < 0.35:
+                confluence['total_score'] = max(0, confluence['total_score'] - 12)
+                confluence['breakdown']['Order Flow'] = f"{max(0, float(confluence['component_scores'].get('order_flow',0))*100 - 12):.0f}/100"
+        except Exception:
+            pass
+
+    # Apply microstructure detectors (penalties / boosts)
+    if micro_flags.get('liquidity_sweep'):
+        confluence['total_score'] = max(0, confluence['total_score'] - 20)
+        confluence['breakdown']['Technical'] = f"{max(0, float(confluence['component_scores'].get('technical',0))*100 - 20):.0f}/100"
+    if micro_flags.get('fvg'):
+        # FVG can be a target or a warning depending on direction; slightly boost confidence
+        confluence['total_score'] = min(100, confluence['total_score'] + 6)
+    if micro_flags.get('msb_bear'):
+        confluence['total_score'] = max(0, confluence['total_score'] - 25)
+    if micro_flags.get('msb_bull'):
+        confluence['total_score'] = min(100, confluence['total_score'] + 12)
     
     # Main Score Display
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -3230,6 +3404,12 @@ st.session_state.alert_threshold = st.sidebar.slider(
     help="Get notified when Sentiment + Technical confluence exceeds this %"
 )
 
+# Finnhub API Key (for macro event blackout)
+st.sidebar.subheader("API Keys & Data Sources")
+finn_key_input = st.sidebar.text_input("Finnhub API Key (for macro events)", value=st.session_state.get('finnhub_api_key','d66b5v1r01qots73uo50d66b5v1r01qots73uo5g'), help="Used to fetch economic calendar events for blackout detection.")
+if finn_key_input:
+    st.session_state['finnhub_api_key'] = finn_key_input
+
 if st.sidebar.button("Test Alert 🔔", use_container_width=True):
     st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
 
@@ -3297,7 +3477,7 @@ options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
 if search_filter:
     options = [o for o in options if search_filter.lower() in o.lower()]
 
-selected_asset = st.sidebar.selectbox("Choose asset", options, index=0 if not options else 0, key='asset_dropdown')
+selected_asset = st.sidebar.selectbox("Choose asset", options, key='asset_dropdown')
 if selected_asset:
     # parse ticker
     m = re.search(r"\(([^)]+)\)", selected_asset)
