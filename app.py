@@ -3303,20 +3303,24 @@ if selected_asset:
     m = re.search(r"\(([^)]+)\)", selected_asset)
     if m:
         sel_ticker = m.group(1)
-        if view_mode == "Single Asset":
-            st.session_state.current_symbol = sel_ticker
-            try:
-                st.session_state['single_symbol_input'] = sel_ticker
-            except Exception:
-                pass
-            st.experimental_rerun()
-        else:
-            st.session_state.symbol_1 = sel_ticker
-            try:
-                st.session_state['symbol_1_input'] = sel_ticker
-            except Exception:
-                pass
-            st.experimental_rerun()
+        # Only apply change when selection actually changed to avoid rerun loops
+        last = st.session_state.get('asset_dropdown_last')
+        if last != selected_asset:
+            st.session_state['asset_dropdown_last'] = selected_asset
+            if view_mode == "Single Asset":
+                st.session_state.current_symbol = sel_ticker
+                try:
+                    st.session_state['single_symbol_input'] = sel_ticker
+                except Exception:
+                    pass
+                st.experimental_rerun()
+            else:
+                st.session_state.symbol_1 = sel_ticker
+                try:
+                    st.session_state['symbol_1_input'] = sel_ticker
+                except Exception:
+                    pass
+                st.experimental_rerun()
 
 # Risk settings
 st.sidebar.subheader("Risk Management")
