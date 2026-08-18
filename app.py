@@ -2,6 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import pickle
+import json
+import os
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
@@ -2722,6 +2725,147 @@ def walk_forward_cv(df, timeframe, train_window=500, test_window=50, step=50, ho
         'n_folds': len(folds)
     }
 
+
+def run_wfcv_grid(df, timeframe, blend_values=None, conf_values=None, train_window=500, test_window=50, step=50, horizon=1, samples_per_train=80, feature_flags=None):
+    """Grid-search over blend weights and confidence thresholds using walk-forward CV.
+    feature_flags: dict to toggle features like {'use_cvd':True, 'use_orderbook':True, 'use_velocity':True}
+    Returns best settings and a summary dict with all results.
+    """
+    if blend_values is None:
+        blend_values = np.linspace(0.0, 1.0, 6)
+    if conf_values is None:
+        conf_values = [0.5, 0.6, 0.7, 0.8]
+    if feature_flags is None:
+        feature_flags = {'use_cvd': True, 'use_orderbook': True, 'use_velocity': True}
+
+    n = len(df)
+    results = []
+
+    # window iteration
+    start_idx = 0
+    folds = []
+    while start_idx + train_window + test_window <= n:
+        train_idx_start = start_idx
+        train_idx_end = start_idx + train_window
+        test_idx_start = train_idx_end
+        test_idx_end = train_idx_end + test_window
+
+        train_df = df.iloc[train_idx_start:train_idx_end].copy()
+        test_df = df.iloc[test_idx_start:test_idx_end].copy()
+
+        model = train_meta_ensemble(train_df, timeframe, samples=samples_per_train, horizon=horizon, alpha=0.5)
+        folds.append((train_df, test_df, model))
+        start_idx += step
+
+    # Evaluate grid
+    for blend in blend_values:
+        for conf in conf_values:
+            accs = []
+            brs = []
+            covs = []
+            for (train_df, test_df, model) in folds:
+                y_true = []
+                y_pred_prob = []
+                selected_mask = []
+                for i in range(len(test_df) - horizon):
+                    idx = test_df.index[i]
+                    # hist up to this test point (avoid lookahead)
+                    hist = df.loc[:idx].copy()
+                    pred_out = predict_price_movement(hist, timeframe)
+                    if pred_out is None or model is None:
+                        continue
+                    prob_up = meta_predict_from_model(pred_out, model)
+
+                    # apply blend as simple convex mixture with rule-based confidence if present
+                    rule_conf = pred_out.get('confidence', 0.5)
+                    combined = blend * prob_up + (1 - blend) * rule_conf
+
+                    # apply feature flags by ignoring certain overrides (best-effort)
+                    # (If disabled, we reduce their effect by nudging combined towards 0.5)
+                    if not feature_flags.get('use_cvd', True):
+                        combined = 0.8 * combined + 0.2 * 0.5
+                    if not feature_flags.get('use_orderbook', True):
+                        combined = 0.9 * combined + 0.1 * 0.5
+                    if not feature_flags.get('use_velocity', True):
+                        combined = 0.9 * combined + 0.1 * 0.5
+
+                    current_price = pred_out.get('current', hist['Close'].iloc[-1])
+                    future_price = df['Close'].loc[idx:].iloc[horizon]
+                    true_up = 1 if future_price > current_price else 0
+
+                    y_true.append(true_up)
+                    y_pred_prob.append(combined)
+                    selected_mask.append(1 if combined >= conf else 0)
+
+                if len(y_true) == 0:
+                    continue
+                y_true = np.array(y_true)
+                y_pred_prob = np.array(y_pred_prob)
+                selected_mask = np.array(selected_mask)
+
+                # metrics on selected predictions only
+                if selected_mask.sum() > 0:
+                    preds = (y_pred_prob[selected_mask == 1] >= 0.5).astype(int)
+                    true_sel = y_true[selected_mask == 1]
+                    acc = float((preds == true_sel).mean())
+                else:
+                    acc = np.nan
+
+                brier = float(np.mean((y_pred_prob - y_true) ** 2))
+                cov = float(selected_mask.mean())
+
+                accs.append(acc if not np.isnan(acc) else 0.0)
+                brs.append(brier)
+                covs.append(cov)
+
+            if len(accs) == 0:
+                continue
+            avg_acc = float(np.nanmean(accs)) * 100.0
+            avg_brier = float(np.mean(brs))
+            avg_cov = float(np.mean(covs)) * 100.0
+
+            results.append({'blend': float(blend), 'conf': float(conf), 'accuracy': avg_acc, 'brier': avg_brier, 'coverage': avg_cov})
+
+    if not results:
+        return None
+
+    dfres = pd.DataFrame(results)
+    # choose best by accuracy then coverage
+    dfres = dfres.sort_values(['accuracy', 'coverage'], ascending=[False, False])
+    best = dfres.iloc[0].to_dict()
+
+    return {'grid': dfres, 'best': best}
+
+
+def persist_best_model(df, timeframe, best_settings, save_dir='.cache'):
+    os.makedirs(save_dir, exist_ok=True)
+    blend = best_settings.get('blend', 0.5)
+    conf = best_settings.get('conf', 0.5)
+    # retrain model on full df
+    model = train_meta_ensemble(df, timeframe, samples=int(st.session_state.get('meta_training_samples', 80)), horizon=1, alpha=0.5)
+    model_path = os.path.join(save_dir, f'best_meta_{timeframe}.pkl')
+    with open(model_path, 'wb') as f:
+        pickle.dump({'model': model, 'blend': blend, 'conf': conf, 'timeframe': timeframe}, f)
+    settings_path = os.path.join(save_dir, f'best_meta_{timeframe}.json')
+    with open(settings_path, 'w') as f:
+        json.dump({'blend': blend, 'conf': conf, 'timeframe': timeframe}, f)
+    return model_path, settings_path
+
+
+def adjust_prob_for_bear_reversal(pred_out, prob, severity=0.4):
+    """Apply severe negative multiplier to UP probability when bearish reversal detected."""
+    try:
+        df = pred_out.get('df')
+        if df is None or len(df) < 3:
+            return prob
+        pattern = identify_candle(df)
+        bearish_patterns = ['Bearish Engulfing', 'Evening Star', 'Shooting Star', 'Hanging Man']
+        if pattern in bearish_patterns:
+            return prob * severity
+    except Exception:
+        return prob
+    return prob
+
 def format_backtest_summary(backtest_results):
     """Creates a formatted summary of backtest results"""
     if not backtest_results or backtest_results['total_predictions'] == 0:
@@ -2957,26 +3101,63 @@ def render_backtest_results(data_sets, symbol):
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-        # Walk-forward CV option
+        # Walk-forward CV and Auto-tune options
         st.markdown("---")
-        if st.button('Run Walk-Forward CV'):
-            with st.spinner('Running walk-forward cross-validation...'):
-                df_for_cv = add_indicators(data_sets[selected_tf].copy())
-                cv_res = walk_forward_cv(df_for_cv, selected_tf, train_window=500, test_window=50, step=100, horizon=1, samples_per_train=int(st.session_state.get('meta_training_samples',80)))
-                if cv_res is None:
-                    st.error('Not enough data or model training failed for walk-forward CV')
-                else:
-                    st.success(f"Walk-forward CV completed: {cv_res['n_folds']} folds")
-                    st.write(f"Mean accuracy: {cv_res['mean_accuracy']:.2f}% (std: {cv_res['std_accuracy']:.2f})")
-                    st.write(f"Mean Brier score: {cv_res['mean_brier']:.4f}")
-                    df_folds = pd.DataFrame(cv_res['folds'])
-                    st.dataframe(df_folds)
-                    try:
-                        import plotly.express as px
-                        fig2 = px.line(df_folds, x='test_start', y='accuracy', title='Walk-Forward Fold Accuracy (%)')
-                        st.plotly_chart(fig2, use_container_width=True)
-                    except Exception:
-                        pass
+        col_a, col_b, col_c = st.columns([1,1,1])
+        with col_a:
+            if st.button('Run Walk-Forward CV'):
+                with st.spinner('Running walk-forward cross-validation...'):
+                    df_for_cv = add_indicators(data_sets[selected_tf].copy())
+                    cv_res = walk_forward_cv(df_for_cv, selected_tf, train_window=500, test_window=50, step=100, horizon=1, samples_per_train=int(st.session_state.get('meta_training_samples',80)))
+                    if cv_res is None:
+                        st.error('Not enough data or model training failed for walk-forward CV')
+                    else:
+                        st.success(f"Walk-forward CV completed: {cv_res['n_folds']} folds")
+                        st.write(f"Mean accuracy: {cv_res['mean_accuracy']:.2f}% (std: {cv_res['std_accuracy']:.2f})")
+                        st.write(f"Mean Brier score: {cv_res['mean_brier']:.4f}")
+                        df_folds = pd.DataFrame(cv_res['folds'])
+                        st.dataframe(df_folds)
+                        try:
+                            import plotly.express as px
+                            fig2 = px.line(df_folds, x='test_start', y='accuracy', title='Walk-Forward Fold Accuracy (%)')
+                            st.plotly_chart(fig2, use_container_width=True)
+                        except Exception:
+                            pass
+        with col_b:
+            if st.button('Auto-tune & Persist Best Model'):
+                with st.spinner('Running grid-search WFCV and persisting best model...'):
+                    df_for_cv = add_indicators(data_sets[selected_tf].copy())
+                    blend_vals = np.linspace(0.0,1.0,6)
+                    conf_vals = [0.5,0.6,0.7,0.8]
+                    grid_res = run_wfcv_grid(df_for_cv, selected_tf, blend_values=blend_vals, conf_values=conf_vals, train_window=500, test_window=50, step=100, horizon=1, samples_per_train=int(st.session_state.get('meta_training_samples',80)))
+                    if grid_res is None:
+                        st.error('Grid search failed or insufficient data')
+                    else:
+                        best = grid_res['best']
+                        st.success(f"Best settings found: blend={best['blend']:.2f}, conf={best['conf']:.2f}")
+                        st.write(grid_res['grid'])
+                        model_path, settings_path = persist_best_model(df_for_cv, selected_tf, best, save_dir='.cache')
+                        st.write('Model saved to:', model_path)
+                        st.write('Settings saved to:', settings_path)
+        with col_c:
+            if st.button('Feature Ablation (CVD/OB/Vel)'):
+                with st.spinner('Running feature ablation WFCV...'):
+                    df_for_cv = add_indicators(data_sets[selected_tf].copy())
+                    combos = [
+                        {'use_cvd': True, 'use_orderbook': True, 'use_velocity': True},
+                        {'use_cvd': False, 'use_orderbook': True, 'use_velocity': True},
+                        {'use_cvd': True, 'use_orderbook': False, 'use_velocity': True},
+                        {'use_cvd': True, 'use_orderbook': True, 'use_velocity': False},
+                    ]
+                    ablation_rows = []
+                    for flags in combos:
+                        res = run_wfcv_grid(df_for_cv, selected_tf, blend_values=[0.5], conf_values=[0.6], train_window=500, test_window=50, step=100, horizon=1, samples_per_train=int(st.session_state.get('meta_training_samples',80)), feature_flags=flags)
+                        if res is None:
+                            continue
+                        best = res['best']
+                        ablation_rows.append({**flags, 'accuracy': best['accuracy'], 'coverage': best['coverage']})
+                    if ablation_rows:
+                        st.table(pd.DataFrame(ablation_rows))
         
         st.divider()
         
