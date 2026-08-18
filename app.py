@@ -77,6 +77,16 @@ st.markdown("""
         border-left: 5px solid #ff8800;
         margin: 10px 0;
     }
+    .key-metric {
+        background-color: #000000; 
+        color: #ffffff; 
+        padding: 18px; 
+        border-radius: 10px; 
+        font-weight: 800; 
+        font-size: 20px;
+        border: 2px solid #ffffff;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,13 +108,11 @@ if 'backtest_log' not in st.session_state:
 if 'show_backtest' not in st.session_state:
     st.session_state.show_backtest = False
 if 'mobile_mode' not in st.session_state:
-    st.session_state.mobile_mode = False
+    st.session_state.mobile_mode = True
 if 'sentiment_cache' not in st.session_state:
     st.session_state.sentiment_cache = {}
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
-if 'mobile_mode' not in st.session_state:
-    st.session_state.mobile_mode = False
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 
@@ -123,18 +131,45 @@ def get_live_prices():
     for symbol, name in symbols.items():
         try:
             ticker = yf.Ticker(symbol)
-            data = ticker.history(period='1d', interval='1m')
-            if not data.empty:
-                current = data['Close'].iloc[-1]
-                prev_close = ticker.info.get('previousClose', current)
-                change = ((current - prev_close) / prev_close) * 100
+            # Prefer fast info if available, then info, then history fallback
+            current = None
+            try:
+                current = ticker.info.get('regularMarketPrice')
+            except:
+                current = None
+
+            if current is None:
+                try:
+                    # Try fast_info for newer yfinance versions
+                    fast = getattr(ticker, 'fast_info', None)
+                    if fast and isinstance(fast, dict):
+                        current = fast.get('lastPrice') or fast.get('last_price')
+                except:
+                    current = None
+
+            if current is None:
+                data = ticker.history(period='1d', interval='1m')
+                if not data.empty:
+                    current = data['Close'].iloc[-1]
+
+            prev_close = None
+            try:
+                prev_close = ticker.info.get('previousClose')
+            except:
+                prev_close = None
+
+            if prev_close in (None, 0):
+                prev_close = current
+
+            if current is not None:
+                change = ((current - prev_close) / prev_close) * 100 if prev_close else 0
                 prices[name] = {
-                    'price': current,
-                    'change': change,
+                    'price': float(current),
+                    'change': float(change),
                     'symbol': symbol
                 }
         except:
-            prices[name] = {'price': 0, 'change': 0, 'symbol': symbol}
+            prices[name] = {'price': 0.0, 'change': 0.0, 'symbol': symbol}
     
     return prices
 
@@ -799,14 +834,38 @@ def calculate_confluence_score(df, sentiment_data, order_flow, regime):
     scores['volume'] = volume_score
     weights['volume'] = 0.10
     
+    # --- ORDER FLOW / CVD (protective override) ---
+    try:
+        recent = df.tail(10)
+        signed_volumes = [(row['Volume'] if row['Close'] > row['Open'] else -row['Volume']) for _, row in recent.iterrows()]
+        cvd = sum(signed_volumes)
+        avg_vol = df['Volume'].tail(50).mean()
+    except Exception:
+        cvd = 0
+        avg_vol = avg_volume
+
+    sell_spike = False
+    try:
+        if cvd < - (avg_vol * 2.5):
+            sell_spike = True
+    except:
+        sell_spike = False
+
     # Calculate weighted confluence
     total_score = sum(scores[key] * weights[key] for key in scores.keys())
+
+    # Apply CVD override: if aggressive selling detected, reduce confluence sharply
+    if sell_spike:
+        total_score = total_score * 0.4
+
     total_score = total_score * 100  # Convert to 0-100
-    
+
     return {
         'total_score': total_score,
         'component_scores': scores,
         'weights': weights,
+        'cvd': cvd,
+        'sell_spike': sell_spike,
         'breakdown': {
             'Sentiment': f"{scores.get('sentiment', 0) * 100:.0f}/100",
             'Regime': f"{scores.get('regime', 0) * 100:.0f}/100",
@@ -923,6 +982,43 @@ def add_indicators(df):
     
     return df
 
+
+def get_short_term_velocity(df, minutes=5):
+    """Estimate short-term price velocity (dPrice/dt) in price units per minute.
+    Uses available candle resolution; converts minutes to nearest number of candles.
+    """
+    if len(df) < 3:
+        return 0.0
+
+    # Infer candle minutes from index frequency if possible
+    try:
+        freq = pd.infer_freq(df.index)
+    except Exception:
+        freq = None
+
+    # Default candle_minutes: try 5 if unknown
+    candle_minutes = 5
+    if freq and 'T' in freq:
+        try:
+            candle_minutes = int(re.sub('[^0-9]', '', freq))
+        except:
+            candle_minutes = 5
+
+    # Number of candles to cover requested minutes (at least 2)
+    n_candles = max(2, int(max(2, minutes / max(1, candle_minutes))))
+
+    recent = df['Close'].tail(n_candles).values
+    if len(recent) < 2:
+        return 0.0
+
+    x = np.arange(len(recent))
+    # Linear regression slope (price change per candle)
+    A = np.vstack([x, np.ones(len(x))]).T
+    m, c = np.linalg.lstsq(A, recent, rcond=None)[0]
+    # Convert slope per candle -> per minute
+    slope_per_min = m / candle_minutes
+    return float(slope_per_min)
+
 # --- 3. ADVANCED PATTERN RECOGNITION ---
 def identify_candle(df):
     if len(df) < 3: return "Incomplete Data"
@@ -978,6 +1074,8 @@ def generate_advanced_signal(df, timeframe_name):
     if len(df) < 200: return None
     curr = df.iloc[-1]
     prev = df.iloc[-2]
+    # Short-term velocity (dPrice/dt) - override EMA biases if negative
+    velocity = get_short_term_velocity(df, minutes=5)
     
     signals = []
     score = 0
@@ -1068,6 +1166,11 @@ def generate_advanced_signal(df, timeframe_name):
     
     # Calculate normalized score (0-100)
     normalized_score = ((score + max_score) / (2 * max_score)) * 100
+
+    # If short-term velocity is negative, reduce bullish bias (override long-term EMA signals)
+    if velocity < 0 and normalized_score > 50:
+        normalized_score = normalized_score * 0.6
+        signals.append("⚠️ Short-term negative velocity detected - overriding EMA bias")
     
     # Determine signal strength
     if normalized_score >= 75:
@@ -1563,11 +1666,22 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
         scalp_score += 10
         scalp_reasons.append(f"✅ Bullish pattern: {candle_5m}")
     elif "Bearish" in candle_5m or "Shooting Star" in candle_5m or "Evening Star" in candle_5m:
+        # Severe penalty for bearish reversal patterns on active timeframe
+        penalty = scalp_max_score * 0.5
         scalp_score -= 10
-        scalp_reasons.append(f"❌ Bearish pattern: {candle_5m}")
+        scalp_score -= penalty
+        scalp_reasons.append(f"❌ Bearish reversal detected - heavy penalty: {candle_5m}")
     
     # Calculate scalping signal
     scalp_normalized = ((scalp_score + scalp_max_score) / (2 * scalp_max_score)) * 100
+
+    # Dynamic Low-Volume Safeguard: reduce confidence when volume <50% of 20-period average
+    try:
+        if curr_5m['Volume'] < (curr_5m['Volume_MA'] * 0.5):
+            scalp_normalized = scalp_normalized * 0.6  # reduce by ~40%
+            scalp_reasons.append("⚠️ Low volume safeguard applied (confidence reduced)")
+    except Exception:
+        pass
     
     if scalp_normalized >= 75 and risk_score < 20:
         master_signals['scalping']['signal'] = "STRONG BUY"
@@ -1584,6 +1698,15 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     else:
         master_signals['scalping']['signal'] = "NEUTRAL"
         master_signals['scalping']['confidence'] = "Low"
+
+    # Explicit low-volume downgrade to avoid false strong signals
+    try:
+        if curr_5m['Volume'] < (curr_5m['Volume_MA'] * 0.5):
+            master_signals['scalping']['signal'] = "CAUTION"
+            master_signals['scalping']['confidence'] = "Low"
+            master_signals['scalping']['reasons'].append("⚠️ Downgraded due to low volume (safeguard)")
+    except Exception:
+        pass
     
     master_signals['scalping']['score'] = scalp_normalized
     master_signals['scalping']['reasons'] = scalp_reasons
@@ -1674,6 +1797,15 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     
     # Calculate intraday signal
     intra_normalized = ((intra_score + intra_max_score) / (2 * intra_max_score)) * 100
+
+    # Apply candlestick penalty on active 1h timeframe
+    try:
+        candle_1h = identify_candle(df_1h)
+        if "Bearish" in candle_1h or "Shooting Star" in candle_1h or "Evening Star" in candle_1h:
+            intra_normalized = intra_normalized * 0.6
+            intra_reasons.append(f"❌ 1h Bearish reversal detected - confidence reduced: {candle_1h}")
+    except Exception:
+        pass
     
     if intra_normalized >= 75 and risk_score < 25:
         master_signals['intraday']['signal'] = "STRONG BUY"
@@ -1693,6 +1825,16 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     
     master_signals['intraday']['score'] = intra_normalized
     master_signals['intraday']['reasons'] = intra_reasons
+
+    # Low-volume safeguard for intraday (1h)
+    try:
+        if curr_1h['Volume'] < (curr_1h['Volume_MA'] * 0.5):
+            master_signals['intraday']['score'] = master_signals['intraday']['score'] * 0.6
+            master_signals['intraday']['signal'] = "CAUTION"
+            master_signals['intraday']['confidence'] = "Low"
+            master_signals['intraday']['reasons'].append("⚠️ Intraday downgraded due to low volume (safeguard)")
+    except Exception:
+        pass
     
     # ============================================
     # SWING SIGNAL (4h + Daily focus)
@@ -1767,6 +1909,15 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     
     # Calculate swing signal
     swing_normalized = ((swing_score + swing_max_score) / (2 * swing_max_score)) * 100
+
+    # Apply candlestick penalty for 4h
+    try:
+        candle_4h = identify_candle(df_4h)
+        if "Bearish" in candle_4h or "Shooting Star" in candle_4h or "Evening Star" in candle_4h:
+            swing_normalized = swing_normalized * 0.6
+            swing_reasons.append(f"❌ 4h Bearish reversal detected - confidence reduced: {candle_4h}")
+    except Exception:
+        pass
     
     if swing_normalized >= 75:
         master_signals['swing']['signal'] = "STRONG BUY"
@@ -1786,6 +1937,16 @@ def calculate_master_signal(data_sets, analysis_results, conflict_analysis):
     
     master_signals['swing']['score'] = swing_normalized
     master_signals['swing']['reasons'] = swing_reasons
+
+    # Low-volume safeguard for swing (4h)
+    try:
+        if curr_4h['Volume'] < (curr_4h['Volume_MA'] * 0.5):
+            master_signals['swing']['score'] = master_signals['swing']['score'] * 0.6
+            master_signals['swing']['signal'] = "CAUTION"
+            master_signals['swing']['confidence'] = "Low"
+            master_signals['swing']['reasons'].append("⚠️ Swing downgraded due to low volume (safeguard)")
+    except Exception:
+        pass
     
     return master_signals
 
@@ -2128,18 +2289,16 @@ def render_professional_confluence(data_sets, symbol, news_items):
     
     with col1:
         score = confluence['total_score']
-        
+        # High-contrast key metric card
+        st.markdown(f"<div class='key-metric'>🎯 CONFLUENCE SCORE<br><strong style='font-size:28px'>{score:.1f}/100</strong></div>", unsafe_allow_html=True)
+        # Short textual interpretation
         if score >= 80:
-            st.success(f"### 🏆 CONFLUENCE SCORE: {score:.1f}/100")
             st.markdown("**INSTITUTIONAL GRADE SETUP** - All systems aligned!")
         elif score >= 65:
-            st.info(f"### ✅ CONFLUENCE SCORE: {score:.1f}/100")
             st.markdown("**HIGH QUALITY SETUP** - Strong agreement")
         elif score >= 50:
-            st.warning(f"### ⚠️ CONFLUENCE SCORE: {score:.1f}/100")
             st.markdown("**MODERATE SETUP** - Mixed signals")
         else:
-            st.error(f"### ❌ CONFLUENCE SCORE: {score:.1f}/100")
             st.markdown("**LOW QUALITY** - Conflicting data")
     
     with col2:
@@ -2334,6 +2493,11 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
         df = add_indicators(data_sets[tf])
         sig = generate_advanced_signal(df, tf)
         analysis_results_temp[tf] = sig
+
+    # Prepare short-term predictions for TP/SL display
+    pred_5m = predict_price_movement(add_indicators(data_sets['5m']), '5m')
+    pred_1h = predict_price_movement(add_indicators(data_sets['1h']), '1h')
+    pred_4h = predict_price_movement(add_indicators(data_sets['4h']), '4h')
     
     # Get conflict analysis
     conflict_analysis_temp = detect_signal_conflicts(data_sets, analysis_results_temp)
@@ -2376,6 +2540,9 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="font-size: 32px; margin: 10px 0;">{icon} {scalp_sig['signal']}</div>
             <div style="color: {text_color}; font-size: 18px;">Score: {scalp_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {scalp_sig['confidence']}</div>
+            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                {f"Entry: ${pred_5m['current']:,.2f} • TP: ${pred_5m['upper_range']:,.2f} • SL: ${pred_5m['lower_range']:,.2f}" if pred_5m else "Entry/TP/SL: N/A"}
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2414,6 +2581,9 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="font-size: 32px; margin: 10px 0;">{icon} {intra_sig['signal']}</div>
             <div style="color: {text_color}; font-size: 18px;">Score: {intra_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {intra_sig['confidence']}</div>
+            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                {f"Entry: ${pred_1h['current']:,.2f} • TP: ${pred_1h['upper_range']:,.2f} • SL: ${pred_1h['lower_range']:,.2f}" if pred_1h else "Entry/TP/SL: N/A"}
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2452,6 +2622,9 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             <div style="font-size: 32px; margin: 10px 0;">{icon} {swing_sig['signal']}</div>
             <div style="color: {text_color}; font-size: 18px;">Score: {swing_sig['score']:.1f}/100</div>
             <div style="color: {text_color}; font-size: 14px;">Confidence: {swing_sig['confidence']}</div>
+            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                {f"Entry: ${pred_4h['current']:,.2f} • TP: ${pred_4h['upper_range']:,.2f} • SL: ${pred_4h['lower_range']:,.2f}" if pred_4h else "Entry/TP/SL: N/A"}
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2493,6 +2666,10 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
                 </div>
                 <div style="margin-top: 10px; font-size: 14px;">
                     Confidence: {pred_1h['confidence']:.1f}% | Range: ${pred_1h['lower_range']:,.2f} - ${pred_1h['upper_range']:,.2f}
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <div class="key-metric" style="flex:1">TP: ${pred_1h['upper_range']:,.2f}</div>
+                    <div class="key-metric" style="flex:1">SL: ${pred_1h['lower_range']:,.2f}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
