@@ -2866,6 +2866,165 @@ def adjust_prob_for_bear_reversal(pred_out, prob, severity=0.4):
         return prob
     return prob
 
+
+def generate_master_strict_signal(df, timeframe, min_meta_conf=0.8, min_rule_conf=0.8, tp_atr_mult=1.0, sl_atr_mult=1.0):
+    """Generate a very strict master signal: only emit when rule-based and meta-model agree
+    and supporting microstructure checks (velocity, no bearish reversal) pass.
+    Returns dict with keys: signal ('UP'/'DOWN'/'NONE'), entry, tp, sl, confidence
+    """
+    try:
+        # require minimum history
+        if df is None or len(df) < 30:
+            return {'signal': 'NONE', 'confidence': 0.0}
+
+        # rule-based signal
+        rule = generate_advanced_signal(df, timeframe)
+        rule_sig = rule.get('signal', 'NONE')
+        rule_conf = float(rule.get('confidence', 0.5))
+
+        # meta-model probability
+        model = None
+        meta_models = st.session_state.get('meta_models', {})
+        if isinstance(meta_models, dict):
+            model = meta_models.get(timeframe)
+        if model is None:
+            # try load persisted model
+            try:
+                path = f'.cache/best_meta_{timeframe}.pkl'
+                if os.path.exists(path):
+                    with open(path,'rb') as f:
+                        obj = pickle.load(f)
+                        model = obj.get('model')
+            except Exception:
+                model = None
+
+        pred_out = predict_price_movement(df, timeframe)
+        if pred_out is None:
+            return {'signal': 'NONE', 'confidence': 0.0}
+
+        meta_prob = 0.5
+        if model is not None:
+            meta_prob = float(meta_predict_from_model(pred_out, model))
+
+        # microstructure checks
+        vel = get_short_term_velocity(df, minutes=5) if 'get_short_term_velocity' in globals() else 0.0
+        cvd = compute_cvd_approx(df, window=20) if 'compute_cvd_approx' in globals() else 0.0
+
+        # bearish reversal detection
+        candle = identify_candle(df) if 'identify_candle' in globals() else ''
+        bearish_patterns = ['Bearish Engulfing', 'Evening Star', 'Shooting Star', 'Hanging Man']
+
+        # decide
+        signal = 'NONE'
+        confidence = min(meta_prob, rule_conf)
+
+        if rule_sig == 'UP' and meta_prob >= min_meta_conf and rule_conf >= min_rule_conf and vel > 0 and candle not in bearish_patterns and cvd > -0.2:
+            signal = 'UP'
+        elif rule_sig == 'DOWN' and (1 - meta_prob) >= min_meta_conf and rule_conf >= min_rule_conf and vel < 0 and candle not in ['Bullish Engulfing', 'Morning Star'] and cvd < 0.2:
+            signal = 'DOWN'
+
+        # TP/SL using ATR
+        # compute ATR(14)
+        df2 = df.copy()
+        df2['prev_close'] = df2['Close'].shift(1)
+        tr1 = (df2['High'] - df2['Low']).abs()
+        tr2 = (df2['High'] - df2['prev_close']).abs()
+        tr3 = (df2['Low'] - df2['prev_close']).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(14, min_periods=1).mean().iloc[-1]
+
+        entry = float(df['Close'].iloc[-1])
+        tp = None
+        sl = None
+        if signal == 'UP':
+            tp = entry + tp_atr_mult * float(atr)
+            sl = entry - sl_atr_mult * float(atr)
+        elif signal == 'DOWN':
+            tp = entry - tp_atr_mult * float(atr)
+            sl = entry + sl_atr_mult * float(atr)
+
+        return {'signal': signal, 'entry': entry, 'tp': tp, 'sl': sl, 'confidence': confidence, 'meta_prob': meta_prob, 'rule_conf': rule_conf}
+    except Exception as e:
+        return {'signal': 'NONE', 'confidence': 0.0}
+
+
+def run_backtest_strict_master(df, timeframe, horizon=50, tp_atr_mult=1.0, sl_atr_mult=1.0):
+    """Backtest the strict master signal: simulate TP/SL over next `horizon` bars.
+    Returns metrics: total_signals, tp_hits, sl_hits, accuracy, avg_holding_bars
+    """
+    signals = []
+    tp_hits = 0
+    sl_hits = 0
+    unresolved = 0
+    holding_bars = []
+
+    for i in range(30, len(df) - horizon):
+        hist = df.iloc[:i+1].copy()
+        res = generate_master_strict_signal(hist, timeframe, tp_atr_mult=tp_atr_mult, sl_atr_mult=sl_atr_mult)
+        if res.get('signal') == 'NONE':
+            continue
+        entry_idx = i
+        entry_price = res['entry']
+        tp = res['tp']
+        sl = res['sl']
+        direction = res['signal']
+
+        hit = None
+        bars_used = None
+        # simulate forward
+        for j in range(1, horizon+1):
+            row = df.iloc[i + j]
+            high = row['High']
+            low = row['Low']
+            if direction == 'UP':
+                if high >= tp and low <= sl:
+                    # both hit in same bar: decide by proximity to entry
+                    if abs(tp - entry_price) <= abs(entry_price - sl):
+                        hit = 'TP'
+                    else:
+                        hit = 'SL'
+                    bars_used = j
+                    break
+                elif high >= tp:
+                    hit = 'TP'
+                    bars_used = j
+                    break
+                elif low <= sl:
+                    hit = 'SL'
+                    bars_used = j
+                    break
+            else:
+                if low <= tp and high >= sl:
+                    if abs(entry_price - tp) <= abs(sl - entry_price):
+                        hit = 'TP'
+                    else:
+                        hit = 'SL'
+                    bars_used = j
+                    break
+                elif low <= tp:
+                    hit = 'TP'
+                    bars_used = j
+                    break
+                elif high >= sl:
+                    hit = 'SL'
+                    bars_used = j
+                    break
+
+        signals.append({'idx': i, 'signal': direction, 'entry': entry_price, 'tp': tp, 'sl': sl, 'hit': hit, 'bars': bars_used})
+        if hit == 'TP':
+            tp_hits += 1
+        elif hit == 'SL':
+            sl_hits += 1
+        else:
+            unresolved += 1
+        if bars_used:
+            holding_bars.append(bars_used)
+
+    total = len(signals)
+    accuracy = float(tp_hits) / total * 100.0 if total > 0 else 0.0
+    avg_hold = float(np.mean(holding_bars)) if holding_bars else None
+    return {'total_signals': total, 'tp_hits': tp_hits, 'sl_hits': sl_hits, 'unresolved': unresolved, 'accuracy': accuracy, 'avg_holding_bars': avg_hold, 'signals': signals}
+
 def format_backtest_summary(backtest_results):
     """Creates a formatted summary of backtest results"""
     if not backtest_results or backtest_results['total_predictions'] == 0:
@@ -3158,6 +3317,21 @@ def render_backtest_results(data_sets, symbol):
                         ablation_rows.append({**flags, 'accuracy': best['accuracy'], 'coverage': best['coverage']})
                     if ablation_rows:
                         st.table(pd.DataFrame(ablation_rows))
+        # Strict master backtest
+        st.markdown("---")
+        if st.button('Run Strict Master Backtest'):
+            with st.spinner('Running strict master backtest...'):
+                df_bt = add_indicators(data_sets[selected_tf].copy())
+                res = run_backtest_strict_master(df_bt, selected_tf, horizon=50, tp_atr_mult=1.0, sl_atr_mult=1.0)
+                if res['total_signals'] == 0:
+                    st.warning('No strict signals found with current parameters')
+                else:
+                    st.success(f"Total signals: {res['total_signals']} — Accuracy (TP rate): {res['accuracy']:.2f}%")
+                    st.write(f"TP hits: {res['tp_hits']}, SL hits: {res['sl_hits']}, Unresolved: {res['unresolved']}")
+                    if res['avg_holding_bars']:
+                        st.write(f"Average holding bars for resolved trades: {res['avg_holding_bars']:.1f}")
+                    df_signals = pd.DataFrame(res['signals'])
+                    st.dataframe(df_signals)
         
         st.divider()
         
