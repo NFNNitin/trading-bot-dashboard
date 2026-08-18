@@ -179,9 +179,36 @@ def get_crypto_news():
     if not FEEDPARSER_AVAILABLE:
         # Fallback news items
         return [
-            {'title': '📰 Install feedparser for live news: pip install feedparser', 
-             'link': '#', 'published': 'Now'},
-            {'title': 'Bitcoin continues strong momentum amid institutional adoption', 
+            {'title': '📰 Install feedparser for live news: pip install feedparser', 'link': '#', 'published': 'Now'},
+            {'title': 'Bitcoin continues strong momentum amid institutional adoption', 'link': 'https://cointelegraph.com', 'published': 'Recent'},
+            {'title': 'Gold prices surge on global economic uncertainty', 'link': 'https://www.reuters.com/markets/commodities', 'published': 'Recent'},
+            {'title': 'Crypto markets show resilience in volatile trading session', 'link': 'https://cryptonews.com', 'published': 'Recent'},
+            {'title': 'XRP gains traction with new partnerships announced', 'link': 'https://cointelegraph.com', 'published': 'Recent'},
+        ]
+
+    news_items = []
+    feeds = [
+        'https://cointelegraph.com/rss',
+        'https://cryptonews.com/news/feed/',
+    ]
+    try:
+        for feed_url in feeds:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:3]:
+                news_items.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'published': entry.get('published', 'Recent')
+                })
+    except Exception:
+        pass
+
+    if not news_items:
+        return [
+            {'title': 'Unable to fetch live news at this time', 'link': '#', 'published': 'Now'},
+        ]
+
+    return news_items[:10]
 
 
 def fetch_finnhub_events(api_key, days=1):
