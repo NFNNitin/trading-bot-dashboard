@@ -87,6 +87,8 @@ st.markdown("""
         border: 2px solid #ffffff;
         text-align: center;
     }
+    /* Hide Streamlit toolbar (prevents viewers from forking/downloading) */
+    [data-testid="stToolbar"] {display: none !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,9 +150,21 @@ def get_live_prices():
                     current = None
 
             if current is None:
-                data = ticker.history(period='1d', interval='1m')
-                if not data.empty:
-                    current = data['Close'].iloc[-1]
+                try:
+                    data = ticker.history(period='1d', interval='1m')
+                    if not data.empty:
+                        current = data['Close'].iloc[-1]
+                except Exception:
+                    current = None
+
+            # Final fallback: try daily download
+            if current is None:
+                try:
+                    hist = yf.download(symbol, period='7d', interval='1d', progress=False)
+                    if not hist.empty:
+                        current = hist['Close'].iloc[-1]
+                except Exception:
+                    current = None
 
             prev_close = None
             try:
@@ -2182,6 +2196,7 @@ def run_backtest(df, timeframe_name, periods_ahead=1):
     results = {
         'predictions': [],
         'actuals': [],
+        'currents': [],
         'timestamps': [],
         'correct_direction': 0,
         'total_predictions': 0,
@@ -2214,6 +2229,7 @@ def run_backtest(df, timeframe_name, periods_ahead=1):
         # Store results
         results['predictions'].append(predicted_price)
         results['actuals'].append(actual_price)
+        results['currents'].append(current_price_at_time)
         results['timestamps'].append(df.index[i])
         
         # Check direction accuracy
@@ -2397,6 +2413,30 @@ def render_backtest_results(data_sets, symbol):
             st.write(f"📈 **Recent Performance:** {result['recent_accuracy']:.1f}%")
             st.write(f"📉 **Avg % Error (MAPE):** {result['mape']:.2f}%")
             st.write(f"🔢 **Total Tests:** {result['total_predictions']}")
+            # Historical 30-day rolling win-rate chart (direction correctness)
+            try:
+                preds = np.array(result['predictions'])
+                actuals = np.array(result['actuals'])
+                currents = np.array(result.get('currents', preds))
+                # Direction correctness per test
+                correct = (np.sign(preds - currents) == np.sign(actuals - currents)).astype(int)
+                # 30-point rolling win rate (or smaller if not enough)
+                window = min(30, len(correct))
+                if window >= 3:
+                    rolling = np.convolve(correct, np.ones(window)/window, mode='valid') * 100
+                    # Build a simple line chart
+                    import plotly.express as px
+                    df_roll = pd.DataFrame({
+                        'timestamp': result['timestamps'][window-1:],
+                        'win_rate': rolling
+                    })
+                    fig = px.line(df_roll, x='timestamp', y='win_rate', title='30-Period Rolling Win-Rate (%)')
+                    fig.update_yaxes(range=[0,100])
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info('Not enough points to plot 30-period rolling win-rate')
+            except Exception:
+                st.info('Unable to render rolling win-rate chart')
             
             # Interpretation
             st.markdown("---")
@@ -2497,8 +2537,12 @@ def render_professional_confluence(data_sets, symbol, news_items):
     volume_profile = calculate_volume_profile(df_1h)
 
     # Macro blackout check (uses Finnhub API key if provided in session state)
-    finnhub_key = st.session_state.get('finnhub_api_key') or ''
-    macro_blackout, ev = check_macro_blackout(finnhub_key, lookahead_minutes=15)
+    finnhub_key = st.session_state.get('finnhub_api_key') or None
+    try:
+        macro_blackout, ev = check_macro_blackout(finnhub_key, lookahead_minutes=15)
+    except Exception:
+        # Protect against Finnhub/API throttling causing sidebar crashes
+        macro_blackout, ev = False, None
 
     # Depth imbalance from Binance (for crypto-like symbols)
     imbalance = get_binance_imbalance(symbol)
@@ -3424,10 +3468,8 @@ st.session_state.alert_threshold = st.sidebar.slider(
 )
 
 # Finnhub API Key (for macro event blackout)
-st.sidebar.subheader("API Keys & Data Sources")
-finn_key_input = st.sidebar.text_input("Finnhub API Key (for macro events)", value=st.session_state.get('finnhub_api_key','d66b5v1r01qots73uo50d66b5v1r01qots73uo5g'), help="Used to fetch economic calendar events for blackout detection.")
-if finn_key_input:
-    st.session_state['finnhub_api_key'] = finn_key_input
+# Load silently from Streamlit secrets if available. Do NOT expose keys in UI.
+st.session_state['finnhub_api_key'] = st.secrets.get('finnhub_api_key', st.session_state.get('finnhub_api_key', None))
 
 if st.sidebar.button("Test Alert 🔔", use_container_width=True):
     st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
