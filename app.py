@@ -3313,14 +3313,14 @@ if selected_asset:
                     st.session_state['single_symbol_input'] = sel_ticker
                 except Exception:
                     pass
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.session_state.symbol_1 = sel_ticker
                 try:
                     st.session_state['symbol_1_input'] = sel_ticker
                 except Exception:
                     pass
-                st.experimental_rerun()
+                st.rerun()
 
 # Risk settings
 st.sidebar.subheader("Risk Management")
