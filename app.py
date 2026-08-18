@@ -3471,7 +3471,7 @@ for idx, (name, ticker) in enumerate(quick_assets.items()):
                     st.session_state['single_symbol_input'] = ticker
                 except Exception:
                     pass
-                st.rerun()
+                # rely on session_state update; avoid forced rerun
             else:
                 # In multi-asset mode, set to symbol_1 and update widget
                 st.session_state.symbol_1 = ticker
@@ -3479,7 +3479,7 @@ for idx, (name, ticker) in enumerate(quick_assets.items()):
                     st.session_state['symbol_1_input'] = ticker
                 except Exception:
                     pass
-                st.rerun()
+                # rely on session_state update; avoid forced rerun
 
 st.sidebar.divider()
 
@@ -3512,7 +3512,7 @@ if selected_asset:
                     st.session_state['single_symbol_input'] = sel_ticker
                 except Exception:
                     pass
-                st.rerun()
+                # rely on session_state update; avoid forced rerun
             else:
                 st.session_state.symbol_1 = sel_ticker
                 try:
