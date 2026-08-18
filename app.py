@@ -341,14 +341,6 @@ def detect_fvg_liquidity_msb(df):
         pass
 
     return flags
-             'link': 'https://cointelegraph.com', 'published': 'Recent'},
-            {'title': 'Gold prices surge on global economic uncertainty', 
-             'link': 'https://www.reuters.com/markets/commodities', 'published': 'Recent'},
-            {'title': 'Crypto markets show resilience in volatile trading session', 
-             'link': 'https://cryptonews.com', 'published': 'Recent'},
-            {'title': 'XRP gains traction with new partnerships announced', 
-             'link': 'https://cointelegraph.com', 'published': 'Recent'},
-        ]
     
     news_items = []
     
