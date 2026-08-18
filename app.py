@@ -3780,6 +3780,23 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
                 st.write(reason)
     
     # Quick interpretation guide
+    # Live Strict Master Signal (user-selectable TF)
+    strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
+    strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
+    if strict_signal and strict_signal.get('signal') != 'NONE':
+        ss = strict_signal
+        color = '#00ff00' if ss['signal']=='UP' else ('#ff4b4b' if ss['signal']=='DOWN' else '#808080')
+        icon = '🚀' if ss['signal']=='UP' else ('🔻' if ss['signal']=='DOWN' else '⏸️')
+        st.markdown(f"""
+        <div style="background-color: {color}; padding: 18px; border-radius: 12px; text-align:center;">
+            <h3 style="margin:0">{icon} Strict Master ({strict_tf})</h3>
+            <div style="font-size:22px; font-weight:700;">{ss['signal']} — Conf: {ss['confidence']:.2f}</div>
+            <div style="margin-top:8px;">Entry: ${ss['entry']:.4f} • TP: ${ss['tp']:.4f} • SL: ${ss['sl']:.4f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='padding:12px; border-radius:8px; background:#f0f0f0; text-align:center;'>No strict master signal right now.</div>", unsafe_allow_html=True)
+
     st.info("""
     💡 **How to Read Master Signals:**
     - **STRONG BUY/SELL (75%+):** All factors aligned - highest conviction trade
