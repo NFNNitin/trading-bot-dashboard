@@ -196,7 +196,8 @@ div[data-testid="collapsedControl"]{display:none !important}
 # Always show the sidebar (remove hide/show controls)
 if 'sidebar_visible' not in st.session_state:
     st.session_state.sidebar_visible = True
-st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
+# Hide Streamlit's collapsible sidebar (we render a static left column instead)
+st.markdown("<style>div[data-testid=\"stSidebar\"]{display:none !important;} </style>", unsafe_allow_html=True)
 
 # Toolbar visibility controlled by `show_toolbar` session state
 if not st.session_state.get('show_toolbar', False):
@@ -4641,25 +4642,87 @@ st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
 
-# Persistent main-area asset selector (always visible) — mirrors sidebar selection
-st.markdown("**Choose asset (always visible)**")
-main_quick_assets = {
-    'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'AAPL': 'AAPL', 'MSFT': 'MSFT', 'NVDA': 'NVDA'
-}
-main_options = [f"{name} ({ticker})" for name, ticker in main_quick_assets.items()]
-main_selected = st.selectbox("Asset (main)", main_options, index=0, key='main_asset_select')
-if main_selected:
-    m = re.search(r"\(([^)]+)\)", main_selected)
-    if m:
-        sel_ticker = m.group(1)
-        last = st.session_state.get('asset_dropdown_last')
-        if last != main_selected:
-            st.session_state['asset_dropdown_last'] = main_selected
-            st.session_state.current_symbol = sel_ticker
-            try:
-                st.session_state['single_symbol_input'] = sel_ticker
-            except Exception:
-                pass
+# Static left control column (non-collapsible) — duplicates essential sidebar controls
+left_col, main_col = st.columns([1,4])
+with left_col:
+    st.header('Controls')
+    # View mode
+    left_view = st.radio('View Mode', ['Single Asset', 'Multi Asset'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, key='left_view_mode')
+    st.session_state.view_mode = left_view
+
+    st.subheader('Assets')
+    single_in = st.text_input('Single Asset', value=st.session_state.get('current_symbol','BTC-USD'), key='left_single_asset')
+    if single_in:
+        st.session_state.current_symbol = single_in.upper()
+    c1, c2 = st.columns(2)
+    with c1:
+        s1 = st.text_input('Asset 1', value=st.session_state.get('symbol_1','BTC-USD'), key='left_symbol_1')
+        if s1:
+            st.session_state.symbol_1 = s1.upper()
+    with c2:
+        s2 = st.text_input('Asset 2', value=st.session_state.get('symbol_2','GC=F'), key='left_symbol_2')
+        if s2:
+            st.session_state.symbol_2 = s2.upper()
+
+    if st.button('🔄 REFRESH NOW', key='left_refresh'):
+        st.session_state.last_refresh = datetime.now()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+    st.session_state.auto_refresh = st.checkbox('Auto-Refresh (60s)', value=st.session_state.get('auto_refresh', True), key='left_auto_refresh')
+    st.session_state.mobile_mode = st.checkbox('📱 Mobile Mode (Simplified)', value=st.session_state.get('mobile_mode', False), key='left_mobile_mode')
+
+    st.subheader('Appearance & UX')
+    st.session_state.compact_mode = st.checkbox('Compact Cards', value=st.session_state.get('compact_mode', False), key='left_compact')
+    st.session_state.use_dark_theme = st.checkbox('Dark Theme', value=st.session_state.get('use_dark_theme', True), key='left_dark')
+    st.session_state.font_scale = st.selectbox('Font Size', options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='left_font')
+    st.session_state.show_tooltips = st.checkbox('Show Tooltips', value=st.session_state.get('show_tooltips', True), key='left_tooltips')
+    st.session_state.show_toolbar = st.checkbox('Show Streamlit Toolbar', value=st.session_state.get('show_toolbar', False), key='left_toolbar')
+
+    st.subheader('Strict Master Settings')
+    st.session_state.strict_params = st.session_state.get('strict_params', {'min_meta_conf':0.8,'min_rule_conf':0.8,'tp_atr_mult':1.0,'sl_atr_mult':1.0})
+    min_meta = st.slider('Min Meta Confidence', 0.5, 0.95, st.session_state.strict_params.get('min_meta_conf',0.8), 0.05, key='left_min_meta')
+    min_rule = st.slider('Min Rule Confidence', 0.5, 0.95, st.session_state.strict_params.get('min_rule_conf',0.8), 0.05, key='left_min_rule')
+    tp_mult = st.slider('TP ATR Multiplier', 0.2, 3.0, st.session_state.strict_params.get('tp_atr_mult',1.0), 0.1, key='left_tp')
+    sl_mult = st.slider('SL ATR Multiplier', 0.2, 3.0, st.session_state.strict_params.get('sl_atr_mult',1.0), 0.1, key='left_sl')
+    if st.button('Apply Strict Settings', key='left_apply_strict'):
+        st.session_state.strict_params = {'min_meta_conf':min_meta,'min_rule_conf':min_rule,'tp_atr_mult':tp_mult,'sl_atr_mult':sl_mult}
+        st.success('Applied strict master settings')
+
+    st.subheader('Quick Select')
+    qcols = st.columns(2)
+    for idx, (name, ticker) in enumerate({'BTC':'BTC-USD','Gold':'GC=F','Silver':'SI=F','ETH':'ETH-USD','AAPL':'AAPL'}.items()):
+        with qcols[idx%2]:
+            if st.button(name, key=f'left_quick_{ticker}'):
+                st.session_state.current_symbol = ticker
+
+    st.subheader('All Assets')
+    assets_catalog = {'Bitcoin':'BTC-USD','Gold':'GC=F','Silver':'SI=F','DXY':'DX-Y.NYB','XRP':'XRP-USD','Ethereum':'ETH-USD','S&P500':'^GSPC','Crude Oil':'CL=F','TSLA':'TSLA','AAPL':'AAPL','MSFT':'MSFT','AMZN':'AMZN','NVDA':'NVDA'}
+    filter_txt = st.text_input('Filter assets', value='', key='left_filter')
+    options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
+    if filter_txt:
+        options = [o for o in options if filter_txt.lower() in o.lower()]
+    sel = st.selectbox('Choose asset', options, key='left_asset_dropdown')
+    if sel:
+        m = re.search(r"\(([^)]+)\)", sel)
+        if m:
+            st.session_state.current_symbol = m.group(1)
+            st.session_state['asset_dropdown_last'] = sel
+
+    st.subheader('Risk Management')
+    st.session_state.risk_reward = st.slider('Risk:Reward Ratio', 1.0, 3.0, st.session_state.get('risk_reward',1.5), 0.5, key='left_rr')
+    st.session_state.position_size = st.number_input('Position Size ($)', min_value=100, value=st.session_state.get('position_size',1000), step=100, key='left_pos')
+    if st.button('📊 Run Backtest', key='left_run_backtest'):
+        st.session_state.show_backtest = not st.session_state.show_backtest
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+with main_col:
+    pass
 
 # Sidebar is always visible; no restore controls required
 
