@@ -99,21 +99,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Quick visible controls to restore/hide the sidebar if it was accidentally collapsed or hidden
+# Always show the sidebar (remove hide/show controls)
 if 'sidebar_visible' not in st.session_state:
     st.session_state.sidebar_visible = True
-
-col_toggle = st.columns([1,5])[0]
-with col_toggle:
-    if st.button('Show Sidebar'):
-        st.session_state.sidebar_visible = True
-    if st.button('Hide Sidebar'):
-        st.session_state.sidebar_visible = False
-
-if not st.session_state.sidebar_visible:
-    st.markdown("<style>div[data-testid=\"stSidebar\"]{display:none !important;} </style>", unsafe_allow_html=True)
-else:
-    st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
+st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
 
 # Toolbar visibility controlled by `show_toolbar` session state
 if not st.session_state.get('show_toolbar', False):
@@ -121,30 +110,7 @@ if not st.session_state.get('show_toolbar', False):
 else:
     st.markdown("<style>[data-testid=\"stToolbar\"]{display:block !important;}</style>", unsafe_allow_html=True)
 
-# If sidebar is hidden for any reason, render a fallback settings panel in main area
-if not st.session_state.sidebar_visible:
-    with st.expander("⚙️ Sidebar Settings (fallback)", expanded=True):
-        st.write("Sidebar is hidden — these controls duplicate the sidebar settings.")
-        # Appearance controls fallback
-        f_compact = st.checkbox("Compact Cards", value=st.session_state.get('compact_mode', False))
-        f_dark = st.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', True))
-        f_font = st.selectbox("Font Size", options=['Small','Normal','Large'], index= ['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')) if st.session_state.get('font_scale') in ['Small','Normal','Large'] else 1)
-        f_toolbar = st.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False))
-
-        # Strict master fallback
-        f_min_meta = st.slider('Min Meta Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_meta_conf',0.8), 0.05)
-        f_min_rule = st.slider('Min Rule Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_rule_conf',0.8), 0.05)
-        f_tp = st.slider('TP ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('tp_atr_mult',1.0), 0.1)
-        f_sl = st.slider('SL ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('sl_atr_mult',1.0), 0.1)
-
-        if st.button('Apply Settings (fallback)'):
-            # mirror into session_state so main logic picks them up
-            st.session_state.compact_mode = f_compact
-            st.session_state.use_dark_theme = f_dark
-            st.session_state.font_scale = f_font
-            st.session_state.show_toolbar = f_toolbar
-            st.session_state.strict_params = {'min_meta_conf': f_min_meta, 'min_rule_conf': f_min_rule, 'tp_atr_mult': f_tp, 'sl_atr_mult': f_sl}
-            st.success('Applied settings')
+# No fallback sidebar controls — sidebar is always visible
 
 # --- INITIALIZE SESSION STATE ---
 if 'last_refresh' not in st.session_state:
@@ -173,19 +139,13 @@ if 'sentiment_cache' not in st.session_state:
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 
-# Allow restoring sidebar via URL param (?show_sidebar=1)
+# Allow showing toolbar via URL param (?show_toolbar=1)
 try:
     params = st.experimental_get_query_params()
 except Exception:
     params = {}
-changed = False
-if params.get('show_sidebar', ['0'])[0] == '1':
-    st.session_state.sidebar_visible = True
-    changed = True
 if params.get('show_toolbar', ['0'])[0] == '1':
     st.session_state.show_toolbar = True
-    changed = True
-if changed:
     try:
         st.experimental_rerun()
     except Exception:
@@ -4587,30 +4547,7 @@ st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
 
-# Persistent restore button near the title for cases where the top-left toggle is hidden
-if not st.session_state.get('sidebar_visible', True):
-    col_restore = st.columns([1,5])[0]
-    with col_restore:
-        if st.button('Show Sidebar', key='show_sidebar_top'):
-            st.session_state.sidebar_visible = True
-            st.experimental_rerun()
-        # Provide a direct link that sets the query param to restore sidebar
-        st.markdown("[Restore sidebar](?show_sidebar=1) — or [Restore and show toolbar](?show_sidebar=1&show_toolbar=1)")
-
-    # Floating restore button (always visible) for cases where top controls are off-screen
-    try:
-        st.markdown(
-            """
-            <style>
-            .floating-restore{position:fixed;left:8px;top:50%;transform:translateY(-50%);z-index:9999;background:#1f6feb;color:white;padding:10px 12px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-weight:700;text-decoration:none}
-            .floating-restore:hover{background:#1158c7}
-            </style>
-            <a class="floating-restore" href="?show_sidebar=1">⯈ Restore Sidebar</a>
-            """,
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        pass
+# Sidebar is always visible; no restore controls required
 
 # --- LIVE PRICE TICKER ---
 st.subheader("🌐 Live Market Feed")
