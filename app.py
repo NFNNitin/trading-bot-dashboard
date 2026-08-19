@@ -4642,68 +4642,92 @@ st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
 
-# Top control panel (non-collapsible) — keeps controls compact at page top
-top_container = st.container()
-with top_container:
-    c1, c2, c3 = st.columns([2,3,3])
-    with c1:
-        st.markdown('### View & Assets')
-        left_view = st.radio('View Mode', ['Single Asset', 'Multi Asset'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, key='top_view_mode', horizontal=True)
-        st.session_state.view_mode = left_view
-        single_in = st.text_input('Single Asset', value=st.session_state.get('current_symbol','BTC-USD'), key='top_single_asset')
-        if single_in:
-            st.session_state.current_symbol = single_in.upper()
-        col_a, col_b = st.columns(2)
-        with col_a:
-            s1 = st.text_input('Asset 1', value=st.session_state.get('symbol_1','BTC-USD'), key='top_symbol_1')
-            if s1:
-                st.session_state.symbol_1 = s1.upper()
-        with col_b:
-            s2 = st.text_input('Asset 2', value=st.session_state.get('symbol_2','GC=F'), key='top_symbol_2')
-            if s2:
-                st.session_state.symbol_2 = s2.upper()
-        if st.button('🔄 REFRESH NOW', key='top_refresh'):
+# Compact top toolbar with dropdown panels and quick navigation buttons
+toolbar = st.container()
+with toolbar:
+    left, mid, right = st.columns([2,6,3])
+    with left:
+        panel = st.selectbox('', ['View & Assets','Appearance & Strict','Quick Select & Risk','All Controls'], index=0, key='toolbar_panel', help='Choose control group to show')
+    with mid:
+        nav_names = ['Overview','Charts','Signals','Backtest','Settings']
+        nav_cols = st.columns(len(nav_names))
+        for i, name in enumerate(nav_names):
+            if nav_cols[i].button(name, key=f'nav_{name}'):
+                st.session_state.active_section = name
+                try:
+                    st.experimental_rerun()
+                except Exception:
+                    pass
+    with right:
+        quick_asset = st.selectbox('', ['BTC-USD','ETH-USD','GC=F','AAPL','^GSPC'], index=0, key='toolbar_quick_asset')
+        if st.button('🔄', key='toolbar_refresh'):
             st.session_state.last_refresh = datetime.now()
             try:
                 st.experimental_rerun()
             except Exception:
                 pass
-        st.checkbox('Auto-Refresh (60s)', value=st.session_state.get('auto_refresh', True), key='top_auto_refresh')
-    with c2:
-        st.markdown('### Appearance & Strict Master')
-        st.checkbox('Compact Cards', value=st.session_state.get('compact_mode', False), key='top_compact')
-        st.checkbox('Dark Theme', value=st.session_state.get('use_dark_theme', True), key='top_dark')
-        st.selectbox('Font Size', options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='top_font')
-        st.checkbox('Show Tooltips', value=st.session_state.get('show_tooltips', True), key='top_tooltips')
-        st.checkbox('Show Streamlit Toolbar', value=st.session_state.get('show_toolbar', False), key='top_toolbar')
-        st.write('Strict Master Settings')
-        min_meta = st.slider('Min Meta Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_meta_conf',0.8), 0.05, key='top_min_meta')
-        min_rule = st.slider('Min Rule Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_rule_conf',0.8), 0.05, key='top_min_rule')
-        tp_mult = st.slider('TP ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('tp_atr_mult',1.0), 0.1, key='top_tp')
-        sl_mult = st.slider('SL ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('sl_atr_mult',1.0), 0.1, key='top_sl')
-        if st.button('Apply Strict Settings', key='top_apply_strict'):
+
+# Compact per-panel controls rendered below the toolbar based on selection
+if st.session_state.get('toolbar_panel','View & Assets') == 'View & Assets':
+    r1, r2, r3 = st.columns([2,3,3])
+    with r1:
+        view = st.radio('', ['Single Asset','Multi Asset'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, horizontal=True, key='toolbar_view')
+        st.session_state.view_mode = view
+    with r2:
+        single = st.text_input('Single Asset', value=st.session_state.get('current_symbol','BTC-USD'), key='toolbar_single')
+        if single:
+            st.session_state.current_symbol = single.upper()
+    with r3:
+        c1, c2 = st.columns(2)
+        with c1:
+            s1 = st.text_input('Asset 1', value=st.session_state.get('symbol_1','BTC-USD'), key='toolbar_symbol_1')
+            if s1:
+                st.session_state.symbol_1 = s1.upper()
+        with c2:
+            s2 = st.text_input('Asset 2', value=st.session_state.get('symbol_2','GC=F'), key='toolbar_symbol_2')
+            if s2:
+                st.session_state.symbol_2 = s2.upper()
+
+elif st.session_state.get('toolbar_panel') == 'Appearance & Strict':
+    a1, a2, a3 = st.columns([2,3,3])
+    with a1:
+        st.checkbox('Compact Cards', value=st.session_state.get('compact_mode', False), key='toolbar_compact')
+        st.checkbox('Dark Theme', value=st.session_state.get('use_dark_theme', True), key='toolbar_dark')
+    with a2:
+        st.selectbox('Font Size', options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='toolbar_font')
+        st.checkbox('Show Tooltips', value=st.session_state.get('show_tooltips', True), key='toolbar_tooltips')
+        st.checkbox('Show Streamlit Toolbar', value=st.session_state.get('show_toolbar', False), key='toolbar_show_toolbar')
+    with a3:
+        min_meta = st.slider('Min Meta Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_meta_conf',0.8), 0.05, key='toolbar_min_meta')
+        min_rule = st.slider('Min Rule Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_rule_conf',0.8), 0.05, key='toolbar_min_rule')
+        tp_mult = st.slider('TP ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('tp_atr_mult',1.0), 0.1, key='toolbar_tp')
+        sl_mult = st.slider('SL ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('sl_atr_mult',1.0), 0.1, key='toolbar_sl')
+        if st.button('Apply Strict', key='toolbar_apply_strict'):
             st.session_state.strict_params = {'min_meta_conf':min_meta,'min_rule_conf':min_rule,'tp_atr_mult':tp_mult,'sl_atr_mult':sl_mult}
             st.success('Applied strict master settings')
-    with c3:
-        st.markdown('### Quick Select & Risk')
-        qcols = st.columns(3)
+
+elif st.session_state.get('toolbar_panel') == 'Quick Select & Risk':
+    q1, q2 = st.columns([3,4])
+    with q1:
         quick_map = {'BTC':'BTC-USD','Gold':'GC=F','Silver':'SI=F','ETH':'ETH-USD','AAPL':'AAPL'}
+        qcols = st.columns(len(quick_map))
         for idx, (name, ticker) in enumerate(quick_map.items()):
-            with qcols[idx%3]:
-                if st.button(name, key=f'top_quick_{ticker}'):
-                    st.session_state.current_symbol = ticker
-        st.text_input('Filter assets', value='', key='top_filter')
+            if qcols[idx].button(name, key=f'quick_{ticker}'):
+                st.session_state.current_symbol = ticker
+    with q2:
         assets_catalog = {'Bitcoin':'BTC-USD','Gold':'GC=F','Silver':'SI=F','DXY':'DX-Y.NYB','XRP':'XRP-USD','Ethereum':'ETH-USD','S&P500':'^GSPC','Crude Oil':'CL=F','TSLA':'TSLA','AAPL':'AAPL','MSFT':'MSFT','AMZN':'AMZN','NVDA':'NVDA'}
         options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
-        sel = st.selectbox('Choose asset', options, key='top_asset_dropdown')
+        sel = st.selectbox('', options, key='toolbar_choose_asset')
         if sel:
             m = re.search(r"\(([^)]+)\)", sel)
             if m:
                 st.session_state.current_symbol = m.group(1)
                 st.session_state['asset_dropdown_last'] = sel
+        st.slider('Risk:Reward', 1.0, 3.0, st.session_state.get('risk_reward',1.5), 0.5, key='toolbar_rr')
+        st.number_input('Position Size ($)', min_value=100, value=st.session_state.get('position_size',1000), step=100, key='toolbar_pos')
 
-        st.slider('Risk:Reward Ratio', 1.0, 3.0, st.session_state.get('risk_reward',1.5), 0.5, key='top_rr')
-        st.number_input('Position Size ($)', min_value=100, value=st.session_state.get('position_size',1000), step=100, key='top_pos')
+else:
+    st.write('All Controls — use the dropdown to focus specific groups')
 
 # Sidebar is always visible; no restore controls required
 
