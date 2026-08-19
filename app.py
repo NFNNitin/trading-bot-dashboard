@@ -97,6 +97,27 @@ st.markdown("""
     }
     /* Streamlit toolbar visibility controlled via settings below */
 </style>
+
+<style>
+/* Force the Streamlit sidebar to remain visible and disable the collapse toggle */
+div[data-testid="stSidebar"]{
+    display:block !important;
+    visibility:visible !important;
+    transform:none !important;
+    width:320px !important;
+    min-width:260px !important;
+    max-width:420px !important;
+}
+/* Hide built-in sidebar toggle buttons (different Streamlit versions use different attributes) */
+button[aria-label="Toggle sidebar"],
+button[aria-label="toggle sidebar"],
+button[title="Toggle sidebar"],
+button[aria-label="Collapse"],
+button[title="Collapse sidebar"],
+div[data-testid="collapsedControl"]{display:none !important}
+
+/* Streamlit toolbar visibility controlled via settings below */
+</style>
 """, unsafe_allow_html=True)
 
 # Always show the sidebar (remove hide/show controls)
