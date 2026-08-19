@@ -226,6 +226,9 @@ if 'show_backtest' not in st.session_state:
     st.session_state.show_backtest = False
 if 'mobile_mode' not in st.session_state:
     st.session_state.mobile_mode = False
+# Active UI section (for toolbar navigation)
+if 'active_section' not in st.session_state:
+    st.session_state.active_section = 'Overview'
 # Ensure desktop users see the sidebar by default
 if not st.session_state.mobile_mode:
     st.session_state.sidebar_visible = True
@@ -243,6 +246,13 @@ if params.get('show_toolbar', ['0'])[0] == '1':
     st.session_state.show_toolbar = True
     try:
         st.experimental_rerun()
+    except Exception:
+        pass
+# Respect optional section param to set active toolbar/menu item
+if params.get('section'):
+    try:
+        sec = params.get('section', ['Overview'])[0]
+        st.session_state.active_section = sec
     except Exception:
         pass
 
@@ -4571,7 +4581,7 @@ quick_assets = {
 cols = st.sidebar.columns(2)
 for idx, (name, ticker) in enumerate(quick_assets.items()):
     with cols[idx % 2]:
-        if st.button(name, use_container_width=True, key=f"quick_{ticker}"):
+        if st.button(name, use_container_width=True, key=f"sidebar_quick_{ticker}"):
             if view_mode == "Single Asset":
                 st.session_state.current_symbol = ticker
                 # Update the single symbol text_input widget state so it reflects the change
@@ -4649,15 +4659,26 @@ with toolbar:
     with left:
         panel = st.selectbox('', ['View & Assets','Appearance & Strict','Quick Select & Risk','All Controls'], index=0, key='toolbar_panel', help='Choose control group to show')
     with mid:
+        # Styled HTML menu for navigation (uses JS to set ?section=... and reload)
         nav_names = ['Overview','Charts','Signals','Backtest','Settings']
-        nav_cols = st.columns(len(nav_names))
-        for i, name in enumerate(nav_names):
-            if nav_cols[i].button(name, key=f'nav_{name}'):
-                st.session_state.active_section = name
-                try:
-                    st.experimental_rerun()
-                except Exception:
-                    pass
+        active = st.session_state.get('active_section', 'Overview')
+        menu_html = """
+        <style>
+        .toolbar-menu {display:flex; gap:8px; align-items:center;}
+        .toolbar-menu .item {padding:8px 14px; border-radius:8px; cursor:pointer; background:#111; color:#ddd; text-decoration:none; font-weight:600;}
+        .toolbar-menu .item.active {background: linear-gradient(90deg,#1f6feb,#6a5acd); color:white; box-shadow: 0 6px 14px rgba(32,124,255,0.18);}
+        .toolbar-menu .item:hover {opacity:0.95; transform:translateY(-1px);}
+        </style>
+        <div class="toolbar-menu" id="toolbarMenu">
+        """
+        for name in nav_names:
+            cls = 'item'
+            if name == active:
+                cls += ' active'
+            # JS onclick will set the section query param and reload
+            menu_html += f"<a class=\"{cls}\" onclick=\"setSection('{name}')\">{name}</a>"
+        menu_html += "</div>\n<script>function setSection(s){const u=new URL(window.location);u.searchParams.set('section',s);window.location=u.toString();}</script>"
+        st.markdown(menu_html, unsafe_allow_html=True)
     with right:
         quick_asset = st.selectbox('', ['BTC-USD','ETH-USD','GC=F','AAPL','^GSPC'], index=0, key='toolbar_quick_asset')
         if st.button('🔄', key='toolbar_refresh'):
@@ -4712,7 +4733,7 @@ elif st.session_state.get('toolbar_panel') == 'Quick Select & Risk':
         quick_map = {'BTC':'BTC-USD','Gold':'GC=F','Silver':'SI=F','ETH':'ETH-USD','AAPL':'AAPL'}
         qcols = st.columns(len(quick_map))
         for idx, (name, ticker) in enumerate(quick_map.items()):
-            if qcols[idx].button(name, key=f'quick_{ticker}'):
+            if qcols[idx].button(name, key=f'toolbar_quick_{ticker}'):
                 st.session_state.current_symbol = ticker
     with q2:
         assets_catalog = {'Bitcoin':'BTC-USD','Gold':'GC=F','Silver':'SI=F','DXY':'DX-Y.NYB','XRP':'XRP-USD','Ethereum':'ETH-USD','S&P500':'^GSPC','Crude Oil':'CL=F','TSLA':'TSLA','AAPL':'AAPL','MSFT':'MSFT','AMZN':'AMZN','NVDA':'NVDA'}
