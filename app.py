@@ -264,7 +264,6 @@ st.sidebar.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', T
 st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='font_scale')
 st.sidebar.checkbox("Show Tooltips", value=st.session_state.get('show_tooltips', True), key='show_tooltips')
 st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), key='show_toolbar', help="Expose Streamlit toolbar for debugging or sharing")
-st.session_state.show_toolbar = st.session_state.get('show_toolbar', False)
 
 if st.session_state.get('compact_mode'):
     st.markdown("""
