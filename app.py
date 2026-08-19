@@ -3783,7 +3783,8 @@ def render_professional_confluence(data_sets, symbol, news_items):
 
 def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     """Renders the full single asset analysis view"""
-    
+    # Anchors for toolbar navigation
+    st.markdown("<div id='all'></div><div id='live-market'></div>", unsafe_allow_html=True)
     current_price = data_sets['5m'].iloc[-1]['Close']
     price_change_24h = ((current_price - data_sets['1d'].iloc[-2]['Close']) / data_sets['1d'].iloc[-2]['Close']) * 100
     
@@ -3828,12 +3829,14 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     st.divider()
     
     # Professional Confluence Analysis (NEW!)
+    st.markdown("<div id='professional-confluence'></div>", unsafe_allow_html=True)
     news_items = get_crypto_news()
     render_professional_confluence(data_sets, symbol, news_items)
     
     st.divider()
     
     # --- MASTER SIGNALS (TOP PRIORITY) ---
+    st.markdown("<div id='analysis'></div>", unsafe_allow_html=True)
     st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
     st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
     
@@ -3987,6 +3990,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     # Quick interpretation guide
     # Live Strict Master Signal (user-selectable TF)
     strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
+    st.markdown("<div id='master-signal'></div>", unsafe_allow_html=True)
     strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
     if strict_signal and strict_signal.get('signal') != 'NONE':
         ss = strict_signal
@@ -4659,26 +4663,64 @@ with toolbar:
     with left:
         panel = st.selectbox('', ['View & Assets','Appearance & Strict','Quick Select & Risk','All Controls'], index=0, key='toolbar_panel', help='Choose control group to show')
     with mid:
-        # Styled HTML menu for navigation (uses JS to set ?section=... and reload)
-        nav_names = ['Overview','Charts','Signals','Backtest','Settings']
-        active = st.session_state.get('active_section', 'Overview')
-        menu_html = """
-        <style>
-        .toolbar-menu {display:flex; gap:8px; align-items:center;}
-        .toolbar-menu .item {padding:8px 14px; border-radius:8px; cursor:pointer; background:#111; color:#ddd; text-decoration:none; font-weight:600;}
-        .toolbar-menu .item.active {background: linear-gradient(90deg,#1f6feb,#6a5acd); color:white; box-shadow: 0 6px 14px rgba(32,124,255,0.18);}
-        .toolbar-menu .item:hover {opacity:0.95; transform:translateY(-1px);}
-        </style>
-        <div class="toolbar-menu" id="toolbarMenu">
-        """
-        for name in nav_names:
-            cls = 'item'
-            if name == active:
-                cls += ' active'
-            # JS onclick will set the section query param and reload
-            menu_html += f"<a class=\"{cls}\" onclick=\"setSection('{name}')\">{name}</a>"
-        menu_html += "</div>\n<script>function setSection(s){const u=new URL(window.location);u.searchParams.set('section',s);window.location=u.toString();}</script>"
-        st.markdown(menu_html, unsafe_allow_html=True)
+                # Fixed styled HTML menu for navigation (Live Market Feed / Analysis / Professional Confluence / Master Signal / All)
+                nav_items = [
+                        ('Live Market Feed','live-market'),
+                        ('Analysis','analysis'),
+                        ('Professional Confluence','professional-confluence'),
+                        ('Master Signal','master-signal'),
+                        ('All','all')
+                ]
+                active = st.session_state.get('active_section', 'live-market')
+                menu_html = """
+                <style>
+                /* Fixed top toolbar */
+                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; box-shadow:0 6px 18px rgba(0,0,0,0.45); background:linear-gradient(90deg,#0f1724,#111827);}
+                .toolbar-menu{display:flex; gap:8px; align-items:center}
+                .toolbar-menu .item{padding:8px 14px; border-radius:8px; cursor:pointer; background:transparent; color:#cbd5e1; text-decoration:none; font-weight:600;}
+                .toolbar-menu .item.active{background:linear-gradient(90deg,#1e3a8a,#7c3aed); color:white; box-shadow:0 6px 14px rgba(99,102,241,0.12)}
+                .toolbar-menu .item:hover{opacity:0.95; transform:translateY(-1px)}
+                /* Add page padding so content isn't hidden under toolbar */
+                body{padding-top:68px !important}
+                </style>
+                <div id="fixedToolbar">
+                    <div class="toolbar-menu" id="toolbarMenu">
+                """
+                for label, anchor in nav_items:
+                        cls = 'item'
+                        if anchor == active or label == active:
+                                cls += ' active'
+                        # Use anchor-based navigation via query param; scrolling handled on load
+                        menu_html += f"<a class=\"{cls}\" onclick=\"setSection('{anchor}')\">{label}</a>"
+                menu_html += """
+                    </div>
+                    <div style='display:flex; gap:8px; align-items:center'>
+                        <select id='toolbarQuickAsset' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);window.location=u.toString();}).call(this)">
+                            <option>BTC-USD</option>
+                            <option>ETH-USD</option>
+                            <option>GC=F</option>
+                            <option>AAPL</option>
+                            <option>^GSPC</option>
+                        </select>
+                        <button onclick="(function(){const u=new URL(window.location);u.searchParams.set('refresh','1');window.location=u.toString();})();" style="padding:8px 10px;border-radius:8px;background:#0b84ff;color:#fff;border:none;">🔄</button>
+                    </div>
+                </div>
+                <script>
+                function setSection(anchor){const u=new URL(window.location);u.searchParams.set('section',anchor);window.location=u.toString();}
+                // On load, if section present, scroll to anchor id
+                document.addEventListener('DOMContentLoaded', function(){
+                        try{
+                                const params = new URLSearchParams(window.location.search);
+                                const sec = params.get('section');
+                                if(sec){
+                                        const el = document.getElementById(sec);
+                                        if(el){ setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120); }
+                                }
+                        }catch(e){}
+                });
+                </script>
+                """
+                st.markdown(menu_html, unsafe_allow_html=True)
     with right:
         quick_asset = st.selectbox('', ['BTC-USD','ETH-USD','GC=F','AAPL','^GSPC'], index=0, key='toolbar_quick_asset')
         if st.button('🔄', key='toolbar_refresh'):
