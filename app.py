@@ -4707,42 +4707,48 @@ with toolbar:
                     'all': 'Jump to the full page overview with every module.'
                 }
 
+                # Smaller, compact toolbar with dropdown for all items and a few primary buttons
                 menu_html = """
                 <style>
-                /* Fixed top toolbar */
-                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; box-shadow:0 6px 18px rgba(0,0,0,0.45); background:linear-gradient(90deg,#0f1724,#111827);} 
-                .toolbar-menu{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-                .toolbar-menu .item{padding:8px 14px; border-radius:8px; cursor:pointer; background:transparent; color:#cbd5e1; text-decoration:none; font-weight:600; position:relative}
-                .toolbar-menu .item.active{background:linear-gradient(90deg,#1e3a8a,#7c3aed); color:white; box-shadow:0 6px 14px rgba(99,102,241,0.12)}
-                .toolbar-menu .item:hover{opacity:0.98; transform:translateY(-1px)}
-                /* Tooltip shown on hover using data-tooltip */
-                .toolbar-menu .item::after{content: attr(data-tooltip); position:absolute; left:50%; transform:translateX(-50%); bottom:-44px; background:rgba(0,0,0,0.88); color:#fff; padding:8px 10px; border-radius:6px; white-space:nowrap; font-size:12px; opacity:0; pointer-events:none; transition:opacity .12s ease, transform .12s ease; box-shadow:0 8px 24px rgba(2,6,23,0.6)}
-                .toolbar-menu .item:hover::after{opacity:1; transform:translateX(-50%) translateY(-4px)}
-                /* Add page padding so content isn't hidden under toolbar */
-                body{padding-top:86px !important}
-                @media (max-width:900px){ body{padding-top:120px !important} .toolbar-menu{max-width:70vw; overflow:auto} }
+                /* Clean professional fixed toolbar */
+                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:8px 14px; box-shadow:0 8px 28px rgba(2,6,23,0.45); background:linear-gradient(90deg,#071127, #0b1f2f); font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+                .toolbar-left{display:flex; gap:12px; align-items:center}
+                .brand{color:#fff; font-weight:700; letter-spacing:0.4px; font-size:14px}
+                .primary-btn{padding:6px 10px; border-radius:8px; background:transparent; color:#dbeafe; border:none; cursor:pointer; font-weight:600; font-size:13px}
+                .primary-btn:hover{background:rgba(255,255,255,0.04)}
+                .toolbar-select{padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); color:#e6eef8; font-size:13px}
+                /* Tooltip styling: white background and dark text for readability */
+                .toolbar-select option{color:#111}
+                .toolbar-menu .item::after{content: attr(data-tooltip); position:absolute; left:50%; transform:translateX(-50%); bottom:-54px; background:#ffffff; color:#071127; padding:8px 10px; border-radius:6px; white-space:nowrap; font-size:12px; opacity:0; pointer-events:none; transition:opacity .12s ease, transform .12s ease; box-shadow:0 12px 32px rgba(2,6,23,0.12)}
+                .toolbar-menu .item:hover::after{opacity:1; transform:translateX(-50%) translateY(-6px)}
+                body{padding-top:78px !important}
+                @media (max-width:900px){ body{padding-top:130px !important} }
                 </style>
                 <div id="fixedToolbar">
-                    <div class="toolbar-menu" id="toolbarMenu">
-                """
-                for label, anchor in nav_items:
-                        cls = 'item'
-                        if anchor == active or label == active:
-                                cls += ' active'
-                        tip = tooltips.get(anchor, '')
-                        # Render each item with data-tooltip and a safe href + JS handler that updates the URL and scrolls without a full reload
-                        menu_html += "<a href=\"javascript:void(0)\" role=\"button\" tabindex=\"0\" class=\"" + cls + "\" data-tooltip=\"" + tip + "\" onclick=\"setSection('" + anchor + "')\" onkeypress=\"if(event.key==='Enter'){setSection('" + anchor + "')}\">" + label + "</a>"
-                menu_html += """
+                    <div class="toolbar-left">
+                        <div class="brand">Pro AI Trader</div>
+                        <button class="primary-btn" onclick="setSection('live-market')">Live Market</button>
+                        <button class="primary-btn" onclick="setSection('analysis')">Analysis</button>
+                        <button class="primary-btn" onclick="setSection('master-signals')">Master Signals</button>
+                        <button class="primary-btn" onclick="setSection('all')">All</button>
                     </div>
                     <div style='display:flex; gap:8px; align-items:center'>
-                        <select id='toolbarQuickAsset' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);history.pushState({},'',u.toString());})();">
+                        <select id='toolbarAllSelect' class='toolbar-select' onchange="(function(){const v=this.value; if(!v) return; const u=new URL(window.location); u.searchParams.set('section', v); window.location=u.toString(); }).call(this)">
+                            <option value=''>Jump to...</option>
+                """
+                # populate select options
+                for label, anchor in nav_items:
+                        menu_html += "<option value='" + anchor + "'>" + label + "</option>"
+                menu_html += """
+                        </select>
+                        <select id='toolbarQuickAsset' class='toolbar-select' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);window.location=u.toString();}).call(this)">
                             <option>BTC-USD</option>
                             <option>ETH-USD</option>
                             <option>GC=F</option>
                             <option>AAPL</option>
                             <option>^GSPC</option>
                         </select>
-                        <button id='toolbarRefreshBtn' style="padding:8px 10px;border-radius:8px;background:#0b84ff;color:#fff;border:none;">🔄</button>
+                        <button id='toolbarRefreshBtn' class='primary-btn' style='background:#0b84ff;color:#fff;'>🔄</button>
                     </div>
                 </div>
                 <script>
@@ -4750,16 +4756,12 @@ with toolbar:
                     try{
                         const u=new URL(window.location);
                         u.searchParams.set('section',anchor);
-                        history.pushState({},'',u.toString());
-                        // Try to scroll to element with id==anchor
-                        const el = document.getElementById(anchor);
-                        if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); }
-                        else { window.scrollTo({top:0, behavior:'smooth'}); }
+                        // Navigate (full reload) so server-side expanders can open for that section
+                        window.location = u.toString();
                     }catch(e){
                         try{ const u=new URL(window.location); u.searchParams.set('section',anchor); window.location=u.toString(); }catch(_){}
                     }
                 }
-                // On load, if section present, scroll to anchor id
                 document.addEventListener('DOMContentLoaded', function(){
                         try{
                                 const params = new URLSearchParams(window.location.search);
@@ -4769,10 +4771,9 @@ with toolbar:
                                         if(el){ setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120); }
                                 }
                         }catch(e){}
-                        // Wire refresh button to update query param (no reload)
                         try{
                             const r = document.getElementById('toolbarRefreshBtn');
-                            if(r) r.onclick = function(){ const u=new URL(window.location); u.searchParams.set('refresh','1'); history.pushState({},'',u.toString()); window.location.reload(); };
+                            if(r) r.onclick = function(){ const u=new URL(window.location); u.searchParams.set('refresh','1'); window.location = u.toString(); };
                         }catch(e){}
                 });
                 </script>
