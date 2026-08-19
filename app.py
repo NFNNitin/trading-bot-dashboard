@@ -4663,25 +4663,64 @@ with toolbar:
     with left:
         panel = st.selectbox('', ['View & Assets','Appearance & Strict','Quick Select & Risk','All Controls'], index=0, key='toolbar_panel', help='Choose control group to show')
     with mid:
-                # Fixed styled HTML menu for navigation (Live Market Feed / Analysis / Professional Confluence / Master Signal / All)
+                # Fixed styled HTML menu for navigation (expanded items + tooltips)
                 nav_items = [
                         ('Live Market Feed','live-market'),
                         ('Analysis','analysis'),
-                        ('Professional Confluence','professional-confluence'),
-                        ('Master Signal','master-signal'),
+                        ('Score Breakdown (Weighted)','score-breakdown'),
+                        ('Sentiment Analysis','sentiment-analysis'),
+                        ('Order Flow Analysis','order-flow'),
+                        ('Market Regime','market-regime'),
+                        ('Volume Profile','volume-profile'),
+                        ('Confluence Recommendation','confluence'),
+                        ('Master Signals','master-signals'),
+                        ('Strict Master Signal','strict-master'),
+                        ('AI Prediction Engine','ai-prediction'),
+                        ('Multi-Timeframe Scanner','multi-timeframe'),
+                        ('Signal Quality Check','signal-quality'),
+                        ('Important Warnings','warnings'),
+                        ('AI Trade Setups','ai-trade-setups'),
+                        ('Advanced Price Chart','advanced-chart'),
+                        ('News','news'),
                         ('All','all')
                 ]
                 active = st.session_state.get('active_section', 'live-market')
+                # human-readable tooltips for each menu item (shown on hover)
+                tooltips = {
+                    'live-market': 'Live price tickers, orderbook snapshot, recent trades and market depth.',
+                    'analysis': 'Aggregate technical indicators, EMA/MA overlays, and trend signals.',
+                    'score-breakdown': 'Weighted breakdown of each sub-signal contributing to the final score.',
+                    'sentiment-analysis': 'News + price-action sentiment scoring with confidence.',
+                    'order-flow': 'Order-book imbalance, CVD approximations and microstructure signals.',
+                    'market-regime': 'Trend vs range classification and regime heuristics (ADX-like).',
+                    'volume-profile': 'Value Area, POC, VAH/VAL from recent candles.',
+                    'confluence': 'Combined recommendation from multiple indicators and timeframes.',
+                    'master-signals': 'Final stacked signals combining rules, meta-model and filters.',
+                    'strict-master': 'High-precision master signal with strict TP/SL and timeframe filters.',
+                    'ai-prediction': 'AI model predictions and confidence for next-period price moves.',
+                    'multi-timeframe': 'Scanner across 1m/5m/15m/1h/4h to surface aligned setups.',
+                    'signal-quality': 'Checks for low-volume, conflicting signals, and reliability score.',
+                    'warnings': 'Important market warnings like macro events, halts, or blackouts.',
+                    'ai-trade-setups': 'AI-suggested trade setups including entries, stops and targets.',
+                    'advanced-chart': 'Interactive advanced price chart with overlays and drawing tools.',
+                    'news': 'Latest curated finance and crypto news headlines.',
+                    'all': 'Jump to the full page overview with every module.'
+                }
+
                 menu_html = """
                 <style>
                 /* Fixed top toolbar */
-                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; box-shadow:0 6px 18px rgba(0,0,0,0.45); background:linear-gradient(90deg,#0f1724,#111827);}
-                .toolbar-menu{display:flex; gap:8px; align-items:center}
-                .toolbar-menu .item{padding:8px 14px; border-radius:8px; cursor:pointer; background:transparent; color:#cbd5e1; text-decoration:none; font-weight:600;}
+                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; box-shadow:0 6px 18px rgba(0,0,0,0.45); background:linear-gradient(90deg,#0f1724,#111827);} 
+                .toolbar-menu{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+                .toolbar-menu .item{padding:8px 14px; border-radius:8px; cursor:pointer; background:transparent; color:#cbd5e1; text-decoration:none; font-weight:600; position:relative}
                 .toolbar-menu .item.active{background:linear-gradient(90deg,#1e3a8a,#7c3aed); color:white; box-shadow:0 6px 14px rgba(99,102,241,0.12)}
-                .toolbar-menu .item:hover{opacity:0.95; transform:translateY(-1px)}
+                .toolbar-menu .item:hover{opacity:0.98; transform:translateY(-1px)}
+                /* Tooltip shown on hover using data-tooltip */
+                .toolbar-menu .item::after{content: attr(data-tooltip); position:absolute; left:50%; transform:translateX(-50%); bottom:-44px; background:rgba(0,0,0,0.88); color:#fff; padding:8px 10px; border-radius:6px; white-space:nowrap; font-size:12px; opacity:0; pointer-events:none; transition:opacity .12s ease, transform .12s ease; box-shadow:0 8px 24px rgba(2,6,23,0.6)}
+                .toolbar-menu .item:hover::after{opacity:1; transform:translateX(-50%) translateY(-4px)}
                 /* Add page padding so content isn't hidden under toolbar */
-                body{padding-top:68px !important}
+                body{padding-top:86px !important}
+                @media (max-width:900px){ body{padding-top:120px !important} .toolbar-menu{max-width:70vw; overflow:auto} }
                 </style>
                 <div id="fixedToolbar">
                     <div class="toolbar-menu" id="toolbarMenu">
@@ -4690,23 +4729,36 @@ with toolbar:
                         cls = 'item'
                         if anchor == active or label == active:
                                 cls += ' active'
-                        # Use anchor-based navigation via query param; scrolling handled on load
-                        menu_html += f"<a class=\"{cls}\" onclick=\"setSection('{anchor}')\">{label}</a>"
+                        tip = tooltips.get(anchor, '')
+                        # Render each item with data-tooltip and a safe href + JS handler that updates the URL and scrolls without a full reload
+                        menu_html += "<a href=\"javascript:void(0)\" role=\"button\" tabindex=\"0\" class=\"" + cls + "\" data-tooltip=\"" + tip + "\" onclick=\"setSection('" + anchor + "')\" onkeypress=\"if(event.key==='Enter'){setSection('" + anchor + "')}\">" + label + "</a>"
                 menu_html += """
                     </div>
                     <div style='display:flex; gap:8px; align-items:center'>
-                        <select id='toolbarQuickAsset' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);window.location=u.toString();}).call(this)">
+                        <select id='toolbarQuickAsset' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);history.pushState({},'',u.toString());})();">
                             <option>BTC-USD</option>
                             <option>ETH-USD</option>
                             <option>GC=F</option>
                             <option>AAPL</option>
                             <option>^GSPC</option>
                         </select>
-                        <button onclick="(function(){const u=new URL(window.location);u.searchParams.set('refresh','1');window.location=u.toString();})();" style="padding:8px 10px;border-radius:8px;background:#0b84ff;color:#fff;border:none;">🔄</button>
+                        <button id='toolbarRefreshBtn' style="padding:8px 10px;border-radius:8px;background:#0b84ff;color:#fff;border:none;">🔄</button>
                     </div>
                 </div>
                 <script>
-                function setSection(anchor){const u=new URL(window.location);u.searchParams.set('section',anchor);window.location=u.toString();}
+                function setSection(anchor){
+                    try{
+                        const u=new URL(window.location);
+                        u.searchParams.set('section',anchor);
+                        history.pushState({},'',u.toString());
+                        // Try to scroll to element with id==anchor
+                        const el = document.getElementById(anchor);
+                        if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); }
+                        else { window.scrollTo({top:0, behavior:'smooth'}); }
+                    }catch(e){
+                        try{ const u=new URL(window.location); u.searchParams.set('section',anchor); window.location=u.toString(); }catch(_){}
+                    }
+                }
                 // On load, if section present, scroll to anchor id
                 document.addEventListener('DOMContentLoaded', function(){
                         try{
@@ -4716,6 +4768,11 @@ with toolbar:
                                         const el = document.getElementById(sec);
                                         if(el){ setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120); }
                                 }
+                        }catch(e){}
+                        // Wire refresh button to update query param (no reload)
+                        try{
+                            const r = document.getElementById('toolbarRefreshBtn');
+                            if(r) r.onclick = function(){ const u=new URL(window.location); u.searchParams.set('refresh','1'); history.pushState({},'',u.toString()); window.location.reload(); };
                         }catch(e){}
                 });
                 </script>
@@ -4795,6 +4852,27 @@ else:
 # Sidebar is always visible; no restore controls required
 
 # --- LIVE PRICE TICKER ---
+# Invisible anchors for toolbar navigation (targets for each menu item)
+st.markdown("""
+<div id='live-market'></div>
+<div id='analysis'></div>
+<div id='score-breakdown'></div>
+<div id='sentiment-analysis'></div>
+<div id='order-flow'></div>
+<div id='market-regime'></div>
+<div id='volume-profile'></div>
+<div id='confluence'></div>
+<div id='master-signals'></div>
+<div id='strict-master'></div>
+<div id='ai-prediction'></div>
+<div id='multi-timeframe'></div>
+<div id='signal-quality'></div>
+<div id='warnings'></div>
+<div id='ai-trade-setups'></div>
+<div id='advanced-chart'></div>
+<div id='news'></div>
+<div id='all'></div>
+""", unsafe_allow_html=True)
 st.subheader("🌐 Live Market Feed")
 live_prices = get_live_prices()
 
