@@ -258,14 +258,15 @@ if params.get('section'):
 
 # --- APPEARANCE / UX SETTINGS ---
 st.sidebar.subheader("Appearance & UX")
-compact_mode = st.sidebar.checkbox("Compact Cards", value=False, help="Reduce padding and font sizes for a denser layout")
-use_dark_theme = st.sidebar.checkbox("Dark Theme", value=True, help="Enable dark color scheme for panels")
-font_scale = st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=1)
-show_tooltips = st.sidebar.checkbox("Show Tooltips", value=True)
-show_toolbar = st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), help="Expose Streamlit toolbar for debugging or sharing")
-st.session_state.show_toolbar = show_toolbar
+# Use session_state-backed sidebar controls so top toolbar duplicates stay in sync
+st.sidebar.checkbox("Compact Cards", value=st.session_state.get('compact_mode', False), key='compact_mode', help="Reduce padding and font sizes for a denser layout")
+st.sidebar.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', True), key='use_dark_theme', help="Enable dark color scheme for panels")
+st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='font_scale')
+st.sidebar.checkbox("Show Tooltips", value=st.session_state.get('show_tooltips', True), key='show_tooltips')
+st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), key='show_toolbar', help="Expose Streamlit toolbar for debugging or sharing")
+st.session_state.show_toolbar = st.session_state.get('show_toolbar', False)
 
-if compact_mode:
+if st.session_state.get('compact_mode'):
     st.markdown("""
     <style>
     .metric-card, .prediction-box, .price-ticker {padding:8px; border-radius:8px}
@@ -274,7 +275,7 @@ if compact_mode:
     </style>
     """, unsafe_allow_html=True)
 
-if not use_dark_theme:
+if not st.session_state.get('use_dark_theme'):
     st.markdown("""
     <style>
     body, .css-1d391kg {background: #fafafa !important; color: #111 !important}
@@ -282,13 +283,13 @@ if not use_dark_theme:
     </style>
     """, unsafe_allow_html=True)
 
-if font_scale == 'Small':
+if st.session_state.get('font_scale','Normal') == 'Small':
     st.markdown("""
     <style>
     body {font-size:13px}
     </style>
     """, unsafe_allow_html=True)
-elif font_scale == 'Large':
+elif st.session_state.get('font_scale','Normal') == 'Large':
     st.markdown("""
     <style>
     body {font-size:17px}
@@ -297,7 +298,7 @@ elif font_scale == 'Large':
 
 # plotly theme
 try:
-    if use_dark_theme:
+    if st.session_state.get('use_dark_theme'):
         pio.templates.default = 'plotly_dark'
     else:
         pio.templates.default = 'plotly'
@@ -4787,6 +4788,53 @@ with toolbar:
                 st.experimental_rerun()
             except Exception:
                 pass
+
+# Top toolbar: searchable asset dropdown (duplicate of sidebar 'All Assets')
+assets_catalog_top = {
+    'Bitcoin': 'BTC-USD', 'Gold': 'GC=F', 'Silver': 'SI=F', 'DXY': 'DX-Y.NYB', 'XRP': 'XRP-USD',
+    'Ethereum': 'ETH-USD', 'S&P500': '^GSPC', 'Crude Oil': 'CL=F', 'Nasdaq': '^IXIC', 'TSLA': 'TSLA',
+    'AAPL': 'AAPL', 'MSFT': 'MSFT', 'AMZN': 'AMZN', 'NVDA': 'NVDA'
+}
+
+top_search, top_select = st.columns([2,5])
+with top_search:
+    _filter = st.text_input('', value='', placeholder='Filter assets...', key='top_asset_filter')
+with top_select:
+    top_options = [f"{name} ({ticker})" for name, ticker in assets_catalog_top.items()]
+    if _filter:
+        top_options = [o for o in top_options if _filter.lower() in o.lower()]
+    top_selected = st.selectbox('', top_options, key='top_asset_dropdown')
+    if top_selected:
+        m = re.search(r"\(([^)]+)\)", top_selected)
+        if m:
+            sel_ticker = m.group(1)
+            last = st.session_state.get('asset_dropdown_last')
+            if last != top_selected:
+                st.session_state['asset_dropdown_last'] = top_selected
+                if st.session_state.get('view_mode','Single Asset') == 'Single Asset':
+                    st.session_state.current_symbol = sel_ticker
+                    try:
+                        st.session_state['single_symbol_input'] = sel_ticker
+                    except Exception:
+                        pass
+                else:
+                    st.session_state.symbol_1 = sel_ticker
+                    try:
+                        st.session_state['symbol_1_input'] = sel_ticker
+                    except Exception:
+                        pass
+
+# Sync small toolbar appearance controls into main session_state so they apply globally
+if 'toolbar_compact' in st.session_state:
+    st.session_state['compact_mode'] = st.session_state.get('toolbar_compact')
+if 'toolbar_dark' in st.session_state:
+    st.session_state['use_dark_theme'] = st.session_state.get('toolbar_dark')
+if 'toolbar_font' in st.session_state:
+    st.session_state['font_scale'] = st.session_state.get('toolbar_font')
+if 'toolbar_tooltips' in st.session_state:
+    st.session_state['show_tooltips'] = st.session_state.get('toolbar_tooltips')
+if 'toolbar_show_toolbar' in st.session_state:
+    st.session_state['show_toolbar'] = st.session_state.get('toolbar_show_toolbar')
 
 # Compact per-panel controls rendered below the toolbar based on selection
 if st.session_state.get('toolbar_panel','View & Assets') == 'View & Assets':
