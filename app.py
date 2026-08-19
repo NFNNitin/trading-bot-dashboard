@@ -155,7 +155,7 @@ if 'backtest_log' not in st.session_state:
 if 'show_backtest' not in st.session_state:
     st.session_state.show_backtest = False
 if 'mobile_mode' not in st.session_state:
-    st.session_state.mobile_mode = True
+    st.session_state.mobile_mode = False
 if 'sentiment_cache' not in st.session_state:
     st.session_state.sentiment_cache = {}
 if 'alert_threshold' not in st.session_state:
