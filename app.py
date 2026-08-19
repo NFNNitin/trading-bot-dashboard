@@ -173,6 +173,18 @@ if 'sentiment_cache' not in st.session_state:
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 
+# Allow restoring sidebar via URL param (?show_sidebar=1)
+params = st.experimental_get_query_params()
+changed = False
+if params.get('show_sidebar', ['0'])[0] == '1':
+    st.session_state.sidebar_visible = True
+    changed = True
+if params.get('show_toolbar', ['0'])[0] == '1':
+    st.session_state.show_toolbar = True
+    changed = True
+if changed:
+    st.experimental_rerun()
+
 # --- APPEARANCE / UX SETTINGS ---
 st.sidebar.subheader("Appearance & UX")
 compact_mode = st.sidebar.checkbox("Compact Cards", value=False, help="Reduce padding and font sizes for a denser layout")
@@ -4567,6 +4579,8 @@ if not st.session_state.get('sidebar_visible', True):
         if st.button('Show Sidebar', key='show_sidebar_top'):
             st.session_state.sidebar_visible = True
             st.experimental_rerun()
+        # Provide a direct link that sets the query param to restore sidebar
+        st.markdown("[Restore sidebar](?show_sidebar=1) — or [Restore and show toolbar](?show_sidebar=1&show_toolbar=1)")
 
 # --- LIVE PRICE TICKER ---
 st.subheader("🌐 Live Market Feed")
