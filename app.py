@@ -96,6 +96,22 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Quick visible controls to restore/hide the sidebar if it was accidentally collapsed or hidden
+if 'sidebar_visible' not in st.session_state:
+    st.session_state.sidebar_visible = True
+
+col_toggle = st.columns([1,5])[0]
+with col_toggle:
+    if st.button('Show Sidebar'):
+        st.session_state.sidebar_visible = True
+    if st.button('Hide Sidebar'):
+        st.session_state.sidebar_visible = False
+
+if not st.session_state.sidebar_visible:
+    st.markdown("<style>div[data-testid=\"stSidebar\"]{display:none !important;} </style>", unsafe_allow_html=True)
+else:
+    st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
+
 # --- INITIALIZE SESSION STATE ---
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
