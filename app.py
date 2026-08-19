@@ -258,6 +258,14 @@ if params.get('section'):
         st.session_state.active_section = sec
     except Exception:
         pass
+# Respect optional symbol param to change current symbol via toolbar URL
+if params.get('symbol'):
+    try:
+        sym = params.get('symbol', [None])[0]
+        if sym:
+            st.session_state.current_symbol = sym
+    except Exception:
+        pass
 
 # --- APPEARANCE / UX SETTINGS ---
 # Optionally render the Streamlit sidebar. When disabled we set defaults in session_state
@@ -4666,8 +4674,8 @@ if show_sidebar:
 
     # Risk settings
     st.sidebar.subheader("Risk Management")
-    risk_reward = st.sidebar.slider("Risk:Reward Ratio", 1.0, 3.0, 1.5, 0.5)
-    position_size = st.sidebar.number_input("Position Size ($)", min_value=100, value=1000, step=100)
+    st.session_state['risk_reward'] = st.sidebar.slider("Risk:Reward Ratio", 1.0, 3.0, st.session_state.get('risk_reward', 1.5), 0.5)
+    st.session_state['position_size'] = st.sidebar.number_input("Position Size ($)", min_value=100, value=st.session_state.get('position_size', 1000), step=100)
 
     st.sidebar.info(f"Last Refresh: {st.session_state.get('last_refresh', datetime.now()).strftime('%H:%M:%S')}")
 else:
@@ -4677,6 +4685,8 @@ else:
     st.session_state.setdefault('symbol_1', st.session_state.get('symbol_1', 'BTC-USD'))
     st.session_state.setdefault('symbol_2', st.session_state.get('symbol_2', 'ETH-USD'))
     st.session_state.setdefault('last_refresh', st.session_state.get('last_refresh', datetime.now()))
+    st.session_state.setdefault('risk_reward', st.session_state.get('risk_reward', 1.5))
+    st.session_state.setdefault('position_size', st.session_state.get('position_size', 1000))
     st.session_state.setdefault('auto_refresh', st.session_state.get('auto_refresh', False))
     st.session_state.setdefault('mobile_mode', st.session_state.get('mobile_mode', False))
     st.session_state.setdefault('alert_threshold', st.session_state.get('alert_threshold', 90))
@@ -4974,6 +4984,11 @@ st.divider()
 # ========================================
 # CONDITIONAL RENDERING BASED ON VIEW MODE
 # ========================================
+
+# Ensure local control variables exist (derived from session_state)
+view_mode = st.session_state.get('view_mode', 'Single Asset')
+risk_reward = st.session_state.get('risk_reward', 1.5)
+position_size = st.session_state.get('position_size', 1000)
 
 if view_mode == "Single Asset":
     # ==================== SINGLE ASSET VIEW ====================
