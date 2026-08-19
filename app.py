@@ -174,7 +174,10 @@ if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 
 # Allow restoring sidebar via URL param (?show_sidebar=1)
-params = st.experimental_get_query_params()
+try:
+    params = st.experimental_get_query_params()
+except Exception:
+    params = {}
 changed = False
 if params.get('show_sidebar', ['0'])[0] == '1':
     st.session_state.sidebar_visible = True
@@ -183,7 +186,10 @@ if params.get('show_toolbar', ['0'])[0] == '1':
     st.session_state.show_toolbar = True
     changed = True
 if changed:
-    st.experimental_rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
 
 # --- APPEARANCE / UX SETTINGS ---
 st.sidebar.subheader("Appearance & UX")
@@ -4446,7 +4452,10 @@ st.sidebar.divider()
 # Manual Refresh Button
 if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
     st.session_state.last_refresh = datetime.now()
-    st.rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
 
 # Auto-refresh toggle
 st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.auto_refresh)
@@ -4479,7 +4488,10 @@ st.sidebar.divider()
 st.sidebar.subheader("🧪 Backtest & Validation")
 if st.sidebar.button("📊 Run Backtest", use_container_width=True):
     st.session_state.show_backtest = not st.session_state.show_backtest
-    st.rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
 
 if st.session_state.show_backtest:
     st.sidebar.success("✅ Backtest results visible below")
@@ -4560,7 +4572,10 @@ if selected_asset:
                     st.session_state['symbol_1_input'] = sel_ticker
                 except Exception:
                     pass
-                st.rerun()
+                try:
+                    st.experimental_rerun()
+                except Exception:
+                    pass
 
 # Risk settings
 st.sidebar.subheader("Risk Management")
@@ -4643,10 +4658,16 @@ else:
 # --- AUTO-REFRESH LOGIC ---
 if st.session_state.auto_refresh:
     time.sleep(60)
-    st.rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
 
 
 # --- AUTO-REFRESH LOGIC ---
 if st.session_state.auto_refresh:
     time.sleep(60)
-    st.rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
