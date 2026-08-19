@@ -112,6 +112,31 @@ if not st.session_state.sidebar_visible:
 else:
     st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
 
+# If sidebar is hidden for any reason, render a fallback settings panel in main area
+if not st.session_state.sidebar_visible:
+    with st.expander("⚙️ Sidebar Settings (fallback)", expanded=True):
+        st.write("Sidebar is hidden — these controls duplicate the sidebar settings.")
+        # Appearance controls fallback
+        f_compact = st.checkbox("Compact Cards", value=st.session_state.get('compact_mode', False))
+        f_dark = st.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', True))
+        f_font = st.selectbox("Font Size", options=['Small','Normal','Large'], index= ['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')) if st.session_state.get('font_scale') in ['Small','Normal','Large'] else 1)
+        f_toolbar = st.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False))
+
+        # Strict master fallback
+        f_min_meta = st.slider('Min Meta Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_meta_conf',0.8), 0.05)
+        f_min_rule = st.slider('Min Rule Confidence', 0.5, 0.95, st.session_state.get('strict_params',{}).get('min_rule_conf',0.8), 0.05)
+        f_tp = st.slider('TP ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('tp_atr_mult',1.0), 0.1)
+        f_sl = st.slider('SL ATR Multiplier', 0.2, 3.0, st.session_state.get('strict_params',{}).get('sl_atr_mult',1.0), 0.1)
+
+        if st.button('Apply Settings (fallback)'):
+            # mirror into session_state so main logic picks them up
+            st.session_state.compact_mode = f_compact
+            st.session_state.use_dark_theme = f_dark
+            st.session_state.font_scale = f_font
+            st.session_state.show_toolbar = f_toolbar
+            st.session_state.strict_params = {'min_meta_conf': f_min_meta, 'min_rule_conf': f_min_rule, 'tp_atr_mult': f_tp, 'sl_atr_mult': f_sl}
+            st.success('Applied settings')
+
 # --- INITIALIZE SESSION STATE ---
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
