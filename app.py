@@ -98,6 +98,52 @@ st.markdown("""
     /* Streamlit toolbar visibility controlled via settings below */
 </style>
 
+<script>
+// Repeatedly enforce sidebar visibility and provide a persistent expand button
+function ensureSidebarVisible(){
+    try{
+        const sb = document.querySelector('[data-testid="stSidebar"]');
+        if(sb){
+            sb.style.display = 'block';
+            sb.style.visibility = 'visible';
+            sb.style.transform = 'none';
+            sb.style.width = '320px';
+            sb.style.minWidth = '260px';
+        }
+        // hide Streamlit's own collapsed control if present
+        const collapsed = document.querySelectorAll('[data-testid="collapsedControl"], button[aria-label="Toggle sidebar"], button[title="Toggle sidebar"]');
+        collapsed.forEach(e=>{ try{ e.style.display='none'; }catch(err){} });
+    }catch(e){ }
+}
+setInterval(ensureSidebarVisible, 400);
+document.addEventListener('DOMContentLoaded', ensureSidebarVisible);
+
+// Create a persistent left-edge expand button
+(function(){
+    try{
+        if(document.getElementById('persistent-expand-btn')) return;
+        const btn = document.createElement('button');
+        btn.id = 'persistent-expand-btn';
+        btn.innerText = '⯈';
+        Object.assign(btn.style, {
+            position: 'fixed',
+            left: '0',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 2147483647,
+            background: '#1f6feb',
+            color: 'white',
+            border: 'none',
+            padding: '8px 10px',
+            borderRadius: '0 6px 6px 0',
+            cursor: 'pointer'
+        });
+        btn.onclick = function(){ ensureSidebarVisible(); if(document.querySelector('[data-testid="stSidebar"]')) document.querySelector('[data-testid="stSidebar"]').focus(); };
+        document.body.appendChild(btn);
+    }catch(e){ }
+})();
+</script>
+
 <style>
 /* Force the Streamlit sidebar to remain visible and disable the collapse toggle */
 div[data-testid="stSidebar"]{
