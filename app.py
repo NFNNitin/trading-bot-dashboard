@@ -25,6 +25,10 @@ except ImportError:
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide")
 
+# Default toolbar visibility (can be toggled in the sidebar)
+if 'show_toolbar' not in st.session_state:
+    st.session_state.show_toolbar = False
+
 # --- CUSTOM CSS FOR REAL-TIME FEEL ---
 st.markdown("""
 <style>
@@ -91,8 +95,7 @@ st.markdown("""
         border: 2px solid #ffffff;
         text-align: center;
     }
-    /* Hide Streamlit toolbar (prevents viewers from forking/downloading) */
-    [data-testid="stToolbar"] {display: none !important;}
+    /* Streamlit toolbar visibility controlled via settings below */
 </style>
 """, unsafe_allow_html=True)
 
@@ -111,6 +114,12 @@ if not st.session_state.sidebar_visible:
     st.markdown("<style>div[data-testid=\"stSidebar\"]{display:none !important;} </style>", unsafe_allow_html=True)
 else:
     st.markdown("<style>div[data-testid=\"stSidebar\"]{display:block !important;} </style>", unsafe_allow_html=True)
+
+# Toolbar visibility controlled by `show_toolbar` session state
+if not st.session_state.get('show_toolbar', False):
+    st.markdown("<style>[data-testid=\"stToolbar\"]{display:none !important;}</style>", unsafe_allow_html=True)
+else:
+    st.markdown("<style>[data-testid=\"stToolbar\"]{display:block !important;}</style>", unsafe_allow_html=True)
 
 # If sidebar is hidden for any reason, render a fallback settings panel in main area
 if not st.session_state.sidebar_visible:
@@ -170,6 +179,8 @@ compact_mode = st.sidebar.checkbox("Compact Cards", value=False, help="Reduce pa
 use_dark_theme = st.sidebar.checkbox("Dark Theme", value=True, help="Enable dark color scheme for panels")
 font_scale = st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=1)
 show_tooltips = st.sidebar.checkbox("Show Tooltips", value=True)
+show_toolbar = st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), help="Expose Streamlit toolbar for debugging or sharing")
+st.session_state.show_toolbar = show_toolbar
 
 if compact_mode:
     st.markdown("""
