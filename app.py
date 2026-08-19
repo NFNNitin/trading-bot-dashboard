@@ -4568,6 +4568,26 @@ st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
 
+# Persistent main-area asset selector (always visible) — mirrors sidebar selection
+st.markdown("**Choose asset (always visible)**")
+main_quick_assets = {
+    'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'AAPL': 'AAPL', 'MSFT': 'MSFT', 'NVDA': 'NVDA'
+}
+main_options = [f"{name} ({ticker})" for name, ticker in main_quick_assets.items()]
+main_selected = st.selectbox("Asset (main)", main_options, index=0, key='main_asset_select')
+if main_selected:
+    m = re.search(r"\(([^)]+)\)", main_selected)
+    if m:
+        sel_ticker = m.group(1)
+        last = st.session_state.get('asset_dropdown_last')
+        if last != main_selected:
+            st.session_state['asset_dropdown_last'] = main_selected
+            st.session_state.current_symbol = sel_ticker
+            try:
+                st.session_state['single_symbol_input'] = sel_ticker
+            except Exception:
+                pass
+
 # Sidebar is always visible; no restore controls required
 
 # --- LIVE PRICE TICKER ---
