@@ -4597,6 +4597,21 @@ if not st.session_state.get('sidebar_visible', True):
         # Provide a direct link that sets the query param to restore sidebar
         st.markdown("[Restore sidebar](?show_sidebar=1) — or [Restore and show toolbar](?show_sidebar=1&show_toolbar=1)")
 
+    # Floating restore button (always visible) for cases where top controls are off-screen
+    try:
+        st.markdown(
+            """
+            <style>
+            .floating-restore{position:fixed;left:8px;top:50%;transform:translateY(-50%);z-index:9999;background:#1f6feb;color:white;padding:10px 12px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-weight:700;text-decoration:none}
+            .floating-restore:hover{background:#1158c7}
+            </style>
+            <a class="floating-restore" href="?show_sidebar=1">⯈ Restore Sidebar</a>
+            """,
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
 # --- LIVE PRICE TICKER ---
 st.subheader("🌐 Live Market Feed")
 live_prices = get_live_prices()
