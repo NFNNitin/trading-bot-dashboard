@@ -142,6 +142,33 @@ document.addEventListener('DOMContentLoaded', ensureSidebarVisible);
         document.body.appendChild(btn);
     }catch(e){ }
 })();
+
+// Add a transparent left-edge blocker to intercept clicks on Streamlit's collapse arrow
+(function(){
+    try{
+        if(document.getElementById('sidebar-blocker')) return;
+        const blocker = document.createElement('div');
+        blocker.id = 'sidebar-blocker';
+        Object.assign(blocker.style, {
+            position: 'fixed',
+            left: '0',
+            top: '0',
+            height: '100vh',
+            width: '48px',
+            zIndex: 2147483647,
+            background: 'transparent',
+            pointerEvents: 'auto',
+            touchAction: 'none'
+        });
+        blocker.onclick = function(e){
+            e.stopPropagation();
+            e.preventDefault();
+            ensureSidebarVisible();
+            return false;
+        };
+        document.body.appendChild(blocker);
+    }catch(e){}
+})();
 </script>
 
 <style>
