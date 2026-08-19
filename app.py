@@ -4549,6 +4549,14 @@ st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
 
+# Persistent restore button near the title for cases where the top-left toggle is hidden
+if not st.session_state.get('sidebar_visible', True):
+    col_restore = st.columns([1,5])[0]
+    with col_restore:
+        if st.button('Show Sidebar', key='show_sidebar_top'):
+            st.session_state.sidebar_visible = True
+            st.experimental_rerun()
+
 # --- LIVE PRICE TICKER ---
 st.subheader("🌐 Live Market Feed")
 live_prices = get_live_prices()
