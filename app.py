@@ -25,6 +25,9 @@ except ImportError:
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide")
 
+# Toggle rendering of Streamlit sidebar. Set to False for a clean top-toolbar-only UI.
+show_sidebar = False
+
 # Default toolbar visibility (can be toggled in the sidebar)
 if 'show_toolbar' not in st.session_state:
     st.session_state.show_toolbar = False
@@ -257,65 +260,75 @@ if params.get('section'):
         pass
 
 # --- APPEARANCE / UX SETTINGS ---
-st.sidebar.subheader("Appearance & UX")
-# Use session_state-backed sidebar controls so top toolbar duplicates stay in sync
-st.sidebar.checkbox("Compact Cards", value=st.session_state.get('compact_mode', False), key='compact_mode', help="Reduce padding and font sizes for a denser layout")
-st.sidebar.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', True), key='use_dark_theme', help="Enable dark color scheme for panels")
-st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='font_scale')
-st.sidebar.checkbox("Show Tooltips", value=st.session_state.get('show_tooltips', True), key='show_tooltips')
-st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), key='show_toolbar', help="Expose Streamlit toolbar for debugging or sharing")
+# Optionally render the Streamlit sidebar. When disabled we set defaults in session_state
+if show_sidebar:
+    st.sidebar.subheader("Appearance & UX")
+    # Use session_state-backed sidebar controls so top toolbar duplicates stay in sync
+    st.sidebar.checkbox("Compact Cards", value=st.session_state.get('compact_mode', False), key='compact_mode', help="Reduce padding and font sizes for a denser layout")
+    st.sidebar.checkbox("Dark Theme", value=st.session_state.get('use_dark_theme', True), key='use_dark_theme', help="Enable dark color scheme for panels")
+    st.sidebar.selectbox("Font Size", options=['Small','Normal','Large'], index=['Small','Normal','Large'].index(st.session_state.get('font_scale','Normal')), key='font_scale')
+    st.sidebar.checkbox("Show Tooltips", value=st.session_state.get('show_tooltips', True), key='show_tooltips')
+    st.sidebar.checkbox("Show Streamlit Toolbar", value=st.session_state.get('show_toolbar', False), key='show_toolbar', help="Expose Streamlit toolbar for debugging or sharing")
 
-if st.session_state.get('compact_mode'):
-    st.markdown("""
-    <style>
-    .metric-card, .prediction-box, .price-ticker {padding:8px; border-radius:8px}
-    .prediction-box {padding:12px}
-    .price-ticker div {font-size:12px}
-    </style>
-    """, unsafe_allow_html=True)
+    if st.session_state.get('compact_mode'):
+        st.markdown("""
+        <style>
+        .metric-card, .prediction-box, .price-ticker {padding:8px; border-radius:8px}
+        .prediction-box {padding:12px}
+        .price-ticker div {font-size:12px}
+        </style>
+        """, unsafe_allow_html=True)
 
-if not st.session_state.get('use_dark_theme'):
-    st.markdown("""
-    <style>
-    body, .css-1d391kg {background: #fafafa !important; color: #111 !important}
-    .metric-card, .price-ticker, .prediction-box {background: #ffffff; color: #111}
-    </style>
-    """, unsafe_allow_html=True)
+    if not st.session_state.get('use_dark_theme'):
+        st.markdown("""
+        <style>
+        body, .css-1d391kg {background: #fafafa !important; color: #111 !important}
+        .metric-card, .price-ticker, .prediction-box {background: #ffffff; color: #111}
+        </style>
+        """, unsafe_allow_html=True)
 
-if st.session_state.get('font_scale','Normal') == 'Small':
-    st.markdown("""
-    <style>
-    body {font-size:13px}
-    </style>
-    """, unsafe_allow_html=True)
-elif st.session_state.get('font_scale','Normal') == 'Large':
-    st.markdown("""
-    <style>
-    body {font-size:17px}
-    </style>
-    """, unsafe_allow_html=True)
+    if st.session_state.get('font_scale','Normal') == 'Small':
+        st.markdown("""
+        <style>
+        body {font-size:13px}
+        </style>
+        """, unsafe_allow_html=True)
+    elif st.session_state.get('font_scale','Normal') == 'Large':
+        st.markdown("""
+        <style>
+        body {font-size:17px}
+        </style>
+        """, unsafe_allow_html=True)
 
-# plotly theme
-try:
-    if st.session_state.get('use_dark_theme'):
-        pio.templates.default = 'plotly_dark'
-    else:
-        pio.templates.default = 'plotly'
-except Exception:
-    pass
+    # plotly theme
+    try:
+        if st.session_state.get('use_dark_theme'):
+            pio.templates.default = 'plotly_dark'
+        else:
+            pio.templates.default = 'plotly'
+    except Exception:
+        pass
 
-# Strict Master tunables
-st.sidebar.subheader('Strict Master Settings')
-min_meta_conf = st.sidebar.slider('Min Meta Confidence', 0.5, 0.95, 0.8, 0.05)
-min_rule_conf = st.sidebar.slider('Min Rule Confidence', 0.5, 0.95, 0.8, 0.05)
-tp_atr_mult = st.sidebar.slider('TP ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
-sl_atr_mult = st.sidebar.slider('SL ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
-if 'strict_params' not in st.session_state:
-    st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
+    # Strict Master tunables
+    st.sidebar.subheader('Strict Master Settings')
+    min_meta_conf = st.sidebar.slider('Min Meta Confidence', 0.5, 0.95, 0.8, 0.05)
+    min_rule_conf = st.sidebar.slider('Min Rule Confidence', 0.5, 0.95, 0.8, 0.05)
+    tp_atr_mult = st.sidebar.slider('TP ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
+    sl_atr_mult = st.sidebar.slider('SL ATR Multiplier', 0.2, 3.0, 1.0, 0.1)
+    if 'strict_params' not in st.session_state:
+        st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
 
-if st.sidebar.button('Apply Strict Settings'):
-    st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
-    st.sidebar.success('Applied strict master settings')
+    if st.sidebar.button('Apply Strict Settings'):
+        st.session_state.strict_params = {'min_meta_conf': min_meta_conf, 'min_rule_conf': min_rule_conf, 'tp_atr_mult': tp_atr_mult, 'sl_atr_mult': sl_atr_mult}
+        st.sidebar.success('Applied strict master settings')
+else:
+    # Sidebar hidden: ensure sensible defaults exist in session_state so top toolbar controls work
+    st.session_state.setdefault('compact_mode', False)
+    st.session_state.setdefault('use_dark_theme', True)
+    st.session_state.setdefault('font_scale', 'Normal')
+    st.session_state.setdefault('show_tooltips', True)
+    st.session_state.setdefault('show_toolbar', False)
+    st.session_state.setdefault('strict_params', {'min_meta_conf': 0.8, 'min_rule_conf': 0.8, 'tp_atr_mult': 1.0, 'sl_atr_mult': 1.0})
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
 if 'meta_rule_blend' not in st.session_state:
@@ -3829,277 +3842,281 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     st.divider()
     
     # Professional Confluence Analysis (NEW!)
-    st.markdown("<div id='professional-confluence'></div>", unsafe_allow_html=True)
-    news_items = get_crypto_news()
-    render_professional_confluence(data_sets, symbol, news_items)
+    active = st.session_state.get('active_section', '')
+    with st.expander("🎯 Professional Confluence Analysis", expanded=(active in ('professional-confluence','analysis','all'))):
+        st.markdown("<div id='professional-confluence'></div>", unsafe_allow_html=True)
+        news_items = get_crypto_news()
+        render_professional_confluence(data_sets, symbol, news_items)
     
     st.divider()
     
     # --- MASTER SIGNALS (TOP PRIORITY) ---
-    st.markdown("<div id='analysis'></div>", unsafe_allow_html=True)
-    st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
-    st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
+    active = st.session_state.get('active_section', '')
+    with st.expander("🎯 MASTER SIGNALS - All Indicators Combined", expanded=(active in ('analysis','master-signals','all'))):
+        st.markdown("<div id='analysis'></div>", unsafe_allow_html=True)
+        st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
+        st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
     
-    # Get analysis results first for master signal calculation
-    timeframes_for_analysis = ['5m', '15m', '30m', '1h', '4h']
-    analysis_results_temp = {}
-    
-    for tf in timeframes_for_analysis:
-        df = add_indicators(data_sets[tf])
-        sig = generate_advanced_signal(df, tf)
-        analysis_results_temp[tf] = sig
+        # Get analysis results first for master signal calculation
+        timeframes_for_analysis = ['5m', '15m', '30m', '1h', '4h']
+        analysis_results_temp = {}
+        
+        for tf in timeframes_for_analysis:
+            df = add_indicators(data_sets[tf])
+            sig = generate_advanced_signal(df, tf)
+            analysis_results_temp[tf] = sig
 
-    # Prepare short-term predictions for TP/SL display
-    pred_5m = predict_price_movement(add_indicators(data_sets['5m']), '5m')
-    pred_1h = predict_price_movement(add_indicators(data_sets['1h']), '1h')
-    pred_4h = predict_price_movement(add_indicators(data_sets['4h']), '4h')
-    
-    # Get conflict analysis
-    conflict_analysis_temp = detect_signal_conflicts(data_sets, analysis_results_temp)
-    
-    # Calculate master signals
-    master_signals = calculate_master_signal(data_sets, analysis_results_temp, conflict_analysis_temp)
-    
-    # Display in prominent cards
-    sig_col1, sig_col2, sig_col3 = st.columns(3)
-    
-    # Scalping Master Signal
-    with sig_col1:
-        scalp_sig = master_signals['scalping']
-        
-        # Color coding
-        if "STRONG BUY" in scalp_sig['signal']:
-            bg_color = "#00ff00"
-            text_color = "black"
-            icon = "🚀"
-        elif "BUY" in scalp_sig['signal']:
-            bg_color = "#90EE90"
-            text_color = "black"
-            icon = "📈"
-        elif "STRONG SELL" in scalp_sig['signal']:
-            bg_color = "#ff4b4b"
-            text_color = "white"
-            icon = "🔻"
-        elif "SELL" in scalp_sig['signal']:
-            bg_color = "#FFA07A"
-            text_color = "black"
-            icon = "📉"
-        else:
-            bg_color = "#808080"
-            text_color = "white"
-            icon = "⏸️"
-        
-        st.markdown(f"""
-        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            <h3 style="color: {text_color}; margin: 0;">⚡ SCALPING</h3>
-            <div style="font-size: 32px; margin: 10px 0;">{icon} {scalp_sig['signal']}</div>
-            <div style="color: {text_color}; font-size: 18px;">Score: {scalp_sig['score']:.1f}/100</div>
-            <div style="color: {text_color}; font-size: 14px;">Confidence: {scalp_sig['confidence']}</div>
-            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_5m['current']:,.2f} • TP: ${pred_5m.get('tp', pred_5m.get('upper_range')):,.2f} • SL: ${pred_5m.get('sl', pred_5m.get('lower_range')):,.2f}" if pred_5m else "Entry/TP/SL: N/A"}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("📋 See Why", expanded=False):
-            for reason in scalp_sig['reasons']:
-                st.write(reason)
-    
-    # Intraday Master Signal
-    with sig_col2:
-        intra_sig = master_signals['intraday']
-        
-        if "STRONG BUY" in intra_sig['signal']:
-            bg_color = "#00ff00"
-            text_color = "black"
-            icon = "🚀"
-        elif "BUY" in intra_sig['signal']:
-            bg_color = "#90EE90"
-            text_color = "black"
-            icon = "📈"
-        elif "STRONG SELL" in intra_sig['signal']:
-            bg_color = "#ff4b4b"
-            text_color = "white"
-            icon = "🔻"
-        elif "SELL" in intra_sig['signal']:
-            bg_color = "#FFA07A"
-            text_color = "black"
-            icon = "📉"
-        else:
-            bg_color = "#808080"
-            text_color = "white"
-            icon = "⏸️"
-        
-        st.markdown(f"""
-        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            <h3 style="color: {text_color}; margin: 0;">📅 INTRADAY</h3>
-            <div style="font-size: 32px; margin: 10px 0;">{icon} {intra_sig['signal']}</div>
-            <div style="color: {text_color}; font-size: 18px;">Score: {intra_sig['score']:.1f}/100</div>
-            <div style="color: {text_color}; font-size: 14px;">Confidence: {intra_sig['confidence']}</div>
-            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_1h['current']:,.2f} • TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f} • SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}" if pred_1h else "Entry/TP/SL: N/A"}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("📋 See Why", expanded=False):
-            for reason in intra_sig['reasons']:
-                st.write(reason)
-    
-    # Swing Master Signal
-    with sig_col3:
-        swing_sig = master_signals['swing']
-        
-        if "STRONG BUY" in swing_sig['signal']:
-            bg_color = "#00ff00"
-            text_color = "black"
-            icon = "🚀"
-        elif "BUY" in swing_sig['signal']:
-            bg_color = "#90EE90"
-            text_color = "black"
-            icon = "📈"
-        elif "STRONG SELL" in swing_sig['signal']:
-            bg_color = "#ff4b4b"
-            text_color = "white"
-            icon = "🔻"
-        elif "SELL" in swing_sig['signal']:
-            bg_color = "#FFA07A"
-            text_color = "black"
-            icon = "📉"
-        else:
-            bg_color = "#808080"
-            text_color = "white"
-            icon = "⏸️"
-        
-        st.markdown(f"""
-        <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            <h3 style="color: {text_color}; margin: 0;">🌊 SWING</h3>
-            <div style="font-size: 32px; margin: 10px 0;">{icon} {swing_sig['signal']}</div>
-            <div style="color: {text_color}; font-size: 18px;">Score: {swing_sig['score']:.1f}/100</div>
-            <div style="color: {text_color}; font-size: 14px;">Confidence: {swing_sig['confidence']}</div>
-            <div style="margin-top:10px; color: {text_color}; font-weight:800;">
-                {f"Entry: ${pred_4h['current']:,.2f} • TP: ${pred_4h.get('tp', pred_4h.get('upper_range')):,.2f} • SL: ${pred_4h.get('sl', pred_4h.get('lower_range')):,.2f}" if pred_4h else "Entry/TP/SL: N/A"}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("📋 See Why", expanded=False):
-            for reason in swing_sig['reasons']:
-                st.write(reason)
-    
-    # Quick interpretation guide
-    # Live Strict Master Signal (user-selectable TF)
-    strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
-    st.markdown("<div id='master-signal'></div>", unsafe_allow_html=True)
-    strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
-    if strict_signal and strict_signal.get('signal') != 'NONE':
-        ss = strict_signal
-        color = '#00ff00' if ss['signal']=='UP' else ('#ff4b4b' if ss['signal']=='DOWN' else '#808080')
-        icon = '🚀' if ss['signal']=='UP' else ('🔻' if ss['signal']=='DOWN' else '⏸️')
-        st.markdown(f"""
-        <div style="background-color: {color}; padding: 18px; border-radius: 12px; text-align:center;">
-            <h3 style="margin:0">{icon} Strict Master ({strict_tf})</h3>
-            <div style="font-size:22px; font-weight:700;">{ss['signal']} — Conf: {ss['confidence']:.2f}</div>
-            <div style="margin-top:8px;">Entry: ${ss['entry']:.4f} • TP: ${ss['tp']:.4f} • SL: ${ss['sl']:.4f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("<div style='padding:12px; border-radius:8px; background:#f0f0f0; text-align:center;'>No strict master signal right now.</div>", unsafe_allow_html=True)
-
-    st.info("""
-    💡 **How to Read Master Signals:**
-    - **STRONG BUY/SELL (75%+):** All factors aligned - highest conviction trade
-    - **BUY/SELL (60-75%):** Most factors aligned - good trade opportunity
-    - **NEUTRAL (<60%):** Mixed signals - wait for clarity
-    
-    Click "📋 See Why" to understand the exact reasoning behind each signal.
-    """)
-    
-    st.divider()
-    
-    # --- AI PRICE PREDICTION ---
-    st.subheader("🤖 AI Price Prediction Engine")
-    
-    pred_cols = st.columns([2, 1])
-    
-    with pred_cols[0]:
+        # Prepare short-term predictions for TP/SL display
         pred_5m = predict_price_movement(add_indicators(data_sets['5m']), '5m')
         pred_1h = predict_price_movement(add_indicators(data_sets['1h']), '1h')
         pred_4h = predict_price_movement(add_indicators(data_sets['4h']), '4h')
         
-        if pred_1h:
+        # Get conflict analysis
+        conflict_analysis_temp = detect_signal_conflicts(data_sets, analysis_results_temp)
+        
+        # Calculate master signals
+        master_signals = calculate_master_signal(data_sets, analysis_results_temp, conflict_analysis_temp)
+        
+        # Display in prominent cards
+        sig_col1, sig_col2, sig_col3 = st.columns(3)
+        
+        # Scalping Master Signal
+        with sig_col1:
+            scalp_sig = master_signals['scalping']
+            
+            # Color coding
+            if "STRONG BUY" in scalp_sig['signal']:
+                bg_color = "#00ff00"
+                text_color = "black"
+                icon = "🚀"
+            elif "BUY" in scalp_sig['signal']:
+                bg_color = "#90EE90"
+                text_color = "black"
+                icon = "📈"
+            elif "STRONG SELL" in scalp_sig['signal']:
+                bg_color = "#ff4b4b"
+                text_color = "white"
+                icon = "🔻"
+            elif "SELL" in scalp_sig['signal']:
+                bg_color = "#FFA07A"
+                text_color = "black"
+                icon = "📉"
+            else:
+                bg_color = "#808080"
+                text_color = "white"
+                icon = "⏸️"
+            
             st.markdown(f"""
-            <div class="prediction-box">
-                <h3>🎯 Next Hour Prediction</h3>
-                <div style="font-size: 32px; margin: 10px 0;">
-                    ${pred_1h['predicted']:,.2f} {pred_1h['direction']}
-                </div>
-                <div style="font-size: 18px;">
-                    Expected Movement: <b>{pred_1h['movement_pct']:+.2f}%</b> ({pred_1h['strength']})
-                </div>
-                <div style="margin-top: 10px; font-size: 14px;">
-                    Confidence: {pred_1h['confidence']:.1f}% | Range: ${pred_1h['lower_range']:,.2f} - ${pred_1h['upper_range']:,.2f}
-                </div>
-                <div style="display:flex; gap:10px; margin-top:12px;">
-                    <div class="key-metric" style="flex:1">TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f}</div>
-                    <div class="key-metric" style="flex:1">SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}</div>
+            <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <h3 style="color: {text_color}; margin: 0;">⚡ SCALPING</h3>
+                <div style="font-size: 32px; margin: 10px 0;">{icon} {scalp_sig['signal']}</div>
+                <div style="color: {text_color}; font-size: 18px;">Score: {scalp_sig['score']:.1f}/100</div>
+                <div style="color: {text_color}; font-size: 14px;">Confidence: {scalp_sig['confidence']}</div>
+                <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                    {f"Entry: ${pred_5m['current']:,.2f} • TP: ${pred_5m.get('tp', pred_5m.get('upper_range')):,.2f} • SL: ${pred_5m.get('sl', pred_5m.get('lower_range')):,.2f}" if pred_5m else "Entry/TP/SL: N/A"}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Show prediction methods breakdown
-            with st.expander("🔬 See Prediction Method Details"):
-                st.markdown("**How This Prediction Was Made:**")
-                st.write("Our AI uses 6 different prediction methods and combines them with intelligent weighting:")
-                
-                method_names = {
-                    'Weighted_Linear': '📈 Time-Weighted Trend Analysis',
-                    'Momentum_EMA': '🚀 Multi-EMA Momentum',
-                    'Mean_Reversion': '🔄 Bollinger Band Mean Reversion',
-                    'Volume_Weighted': '📊 Volume-Weighted Analysis',
-                    'SR_Level': '🎯 Support/Resistance Levels',
-                    'Trend_ADX': '💪 ADX Trend Strength'
-                }
-                
-                for method_key, method_name in method_names.items():
-                    if method_key in pred_1h['method_predictions']:
-                        pred_val = pred_1h['method_predictions'][method_key]
-                        weight = pred_1h['method_weights'][method_key]
-                        st.write(f"{method_name}: ${pred_val:,.2f} (Weight: {weight:.1f})")
-                
-                st.divider()
-                st.caption(f"📊 ADX (Trend Strength): {pred_1h['adx']:.1f}")
-                st.caption(f"📈 RSI (Momentum): {pred_1h['rsi']:.1f}")
-    
-    with pred_cols[1]:
-        if pred_5m and pred_4h:
-            st.markdown("**⚡ Short-Term (5m)**")
-            st.write(f"{pred_5m['direction']} {pred_5m['movement_pct']:+.2f}%")
-            st.write(f"Strength: {pred_5m['strength']}")
+            with st.expander("📋 See Why", expanded=False):
+                for reason in scalp_sig['reasons']:
+                    st.write(reason)
+        
+        # Intraday Master Signal
+        with sig_col2:
+            intra_sig = master_signals['intraday']
             
-            st.markdown("**📅 Medium-Term (4h)**")
-            st.write(f"{pred_4h['direction']} {pred_4h['movement_pct']:+.2f}%")
-            st.write(f"Strength: {pred_4h['strength']}")
+            if "STRONG BUY" in intra_sig['signal']:
+                bg_color = "#00ff00"
+                text_color = "black"
+                icon = "🚀"
+            elif "BUY" in intra_sig['signal']:
+                bg_color = "#90EE90"
+                text_color = "black"
+                icon = "📈"
+            elif "STRONG SELL" in intra_sig['signal']:
+                bg_color = "#ff4b4b"
+                text_color = "white"
+                icon = "🔻"
+            elif "SELL" in intra_sig['signal']:
+                bg_color = "#FFA07A"
+                text_color = "black"
+                icon = "📉"
+            else:
+                bg_color = "#808080"
+                text_color = "white"
+                icon = "⏸️"
+            
+            st.markdown(f"""
+            <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <h3 style="color: {text_color}; margin: 0;">📅 INTRADAY</h3>
+                <div style="font-size: 32px; margin: 10px 0;">{icon} {intra_sig['signal']}</div>
+                <div style="color: {text_color}; font-size: 18px;">Score: {intra_sig['score']:.1f}/100</div>
+                <div style="color: {text_color}; font-size: 14px;">Confidence: {intra_sig['confidence']}</div>
+                <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                    {f"Entry: ${pred_1h['current']:,.2f} • TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f} • SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}" if pred_1h else "Entry/TP/SL: N/A"}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            with st.expander("📋 See Why", expanded=False):
+                for reason in intra_sig['reasons']:
+                    st.write(reason)
+        
+        # Swing Master Signal
+        with sig_col3:
+            swing_sig = master_signals['swing']
+            
+            if "STRONG BUY" in swing_sig['signal']:
+                bg_color = "#00ff00"
+                text_color = "black"
+                icon = "🚀"
+            elif "BUY" in swing_sig['signal']:
+                bg_color = "#90EE90"
+                text_color = "black"
+                icon = "📈"
+            elif "STRONG SELL" in swing_sig['signal']:
+                bg_color = "#ff4b4b"
+                text_color = "white"
+                icon = "🔻"
+            elif "SELL" in swing_sig['signal']:
+                bg_color = "#FFA07A"
+                text_color = "black"
+                icon = "📉"
+            else:
+                bg_color = "#808080"
+                text_color = "white"
+                icon = "⏸️"
+            
+            st.markdown(f"""
+            <div style="background-color: {bg_color}; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <h3 style="color: {text_color}; margin: 0;">🌊 SWING</h3>
+                <div style="font-size: 32px; margin: 10px 0;">{icon} {swing_sig['signal']}</div>
+                <div style="color: {text_color}; font-size: 18px;">Score: {swing_sig['score']:.1f}/100</div>
+                <div style="color: {text_color}; font-size: 14px;">Confidence: {swing_sig['confidence']}</div>
+                <div style="margin-top:10px; color: {text_color}; font-weight:800;">
+                    {f"Entry: ${pred_4h['current']:,.2f} • TP: ${pred_4h.get('tp', pred_4h.get('upper_range')):,.2f} • SL: ${pred_4h.get('sl', pred_4h.get('lower_range')):,.2f}" if pred_4h else "Entry/TP/SL: N/A"}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            with st.expander("📋 See Why", expanded=False):
+                for reason in swing_sig['reasons']:
+                    st.write(reason)
     
-    st.divider()
-    
+    # Quick interpretation guide
+    # Live Strict Master Signal (user-selectable TF)
+    active = st.session_state.get('active_section', '')
+    with st.expander("High-Precision Strict Master Signal", expanded=(active in ('strict-master','master-signals','all'))):
+        strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
+        st.markdown("<div id='master-signal'></div>", unsafe_allow_html=True)
+        strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
+        if strict_signal and strict_signal.get('signal') != 'NONE':
+            ss = strict_signal
+            color = '#00ff00' if ss['signal']=='UP' else ('#ff4b4b' if ss['signal']=='DOWN' else '#808080')
+            icon = '🚀' if ss['signal']=='UP' else ('🔻' if ss['signal']=='DOWN' else '⏸️')
+            st.markdown(f"""
+            <div style="background-color: {color}; padding: 18px; border-radius: 12px; text-align:center;">
+                <h3 style="margin:0">{icon} Strict Master ({strict_tf})</h3>
+                <div style="font-size:22px; font-weight:700;">{ss['signal']} — Conf: {ss['confidence']:.2f}</div>
+                <div style="margin-top:8px;">Entry: ${ss['entry']:.4f} • TP: ${ss['tp']:.4f} • SL: ${ss['sl']:.4f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='padding:12px; border-radius:8px; background:#f0f0f0; text-align:center;'>No strict master signal right now.</div>", unsafe_allow_html=True)
+
+        st.info("""
+        💡 **How to Read Master Signals:**
+        - **STRONG BUY/SELL (75%+):** All factors aligned - highest conviction trade
+        - **BUY/SELL (60-75%):** Most factors aligned - good trade opportunity
+        - **NEUTRAL (<60%):** Mixed signals - wait for clarity
+        
+        Click "📋 See Why" to understand the exact reasoning behind each signal.
+        """)
+
+    # --- AI PRICE PREDICTION ---
+    with st.expander("🤖 AI Price Prediction Engine", expanded=(active in ('ai-prediction','analysis','all'))):
+        st.subheader("🤖 AI Price Prediction Engine")
+        pred_cols = st.columns([2, 1])
+        with pred_cols[0]:
+            pred_5m = predict_price_movement(add_indicators(data_sets['5m']), '5m')
+            pred_1h = predict_price_movement(add_indicators(data_sets['1h']), '1h')
+            pred_4h = predict_price_movement(add_indicators(data_sets['4h']), '4h')
+            
+            if pred_1h:
+                st.markdown(f"""
+                <div class="prediction-box">
+                    <h3>🎯 Next Hour Prediction</h3>
+                    <div style="font-size: 32px; margin: 10px 0;">
+                        ${pred_1h['predicted']:,.2f} {pred_1h['direction']}
+                    </div>
+                    <div style="font-size: 18px;">
+                        Expected Movement: <b>{pred_1h['movement_pct']:+.2f}%</b> ({pred_1h['strength']})
+                    </div>
+                    <div style="margin-top: 10px; font-size: 14px;">
+                        Confidence: {pred_1h['confidence']:.1f}% | Range: ${pred_1h['lower_range']:,.2f} - ${pred_1h['upper_range']:,.2f}
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:12px;">
+                        <div class="key-metric" style="flex:1">TP: ${pred_1h.get('tp', pred_1h.get('upper_range')):,.2f}</div>
+                        <div class="key-metric" style="flex:1">SL: ${pred_1h.get('sl', pred_1h.get('lower_range')):,.2f}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Show prediction methods breakdown
+                with st.expander("🔬 See Prediction Method Details"):
+                    st.markdown("**How This Prediction Was Made:**")
+                    st.write("Our AI uses 6 different prediction methods and combines them with intelligent weighting:")
+                    
+                    method_names = {
+                        'Weighted_Linear': '📈 Time-Weighted Trend Analysis',
+                        'Momentum_EMA': '🚀 Multi-EMA Momentum',
+                        'Mean_Reversion': '🔄 Bollinger Band Mean Reversion',
+                        'Volume_Weighted': '📊 Volume-Weighted Analysis',
+                        'SR_Level': '🎯 Support/Resistance Levels',
+                        'Trend_ADX': '💪 ADX Trend Strength'
+                    }
+                    
+                    for method_key, method_name in method_names.items():
+                        if method_key in pred_1h['method_predictions']:
+                            pred_val = pred_1h['method_predictions'][method_key]
+                            weight = pred_1h['method_weights'][method_key]
+                            st.write(f"{method_name}: ${pred_val:,.2f} (Weight: {weight:.1f})")
+                    
+                    st.divider()
+                    st.caption(f"📊 ADX (Trend Strength): {pred_1h['adx']:.1f}")
+                    st.caption(f"📈 RSI (Momentum): {pred_1h['rsi']:.1f}")
+        
+        with pred_cols[1]:
+            if pred_5m and pred_4h:
+                st.markdown("**⚡ Short-Term (5m)**")
+                st.write(f"{pred_5m['direction']} {pred_5m['movement_pct']:+.2f}%")
+                st.write(f"Strength: {pred_5m['strength']}")
+                
+                st.markdown("**📅 Medium-Term (4h)**")
+                st.write(f"{pred_4h['direction']} {pred_4h['movement_pct']:+.2f}%")
+                st.write(f"Strength: {pred_4h['strength']}")
+
     # Backtest section (conditional)
-    if st.session_state.show_backtest:
+    if st.session_state.get('show_backtest'):
         render_backtest_results(data_sets, symbol)
         st.divider()
-    
-    # Multi-timeframe + strategies
-    render_timeframe_scanner(data_sets, risk_reward, position_size)
-    
+
+    # Multi-timeframe + strategies (wrapped so it can auto-open)
+    with st.expander("⏰ Multi-Timeframe Scanner", expanded=(active in ('multi-timeframe','all'))):
+        render_timeframe_scanner(data_sets, risk_reward, position_size)
+
     st.divider()
-    
-    # Advanced chart
-    render_advanced_chart(data_sets)
-    
+
+    # Advanced chart (wrapped)
+    with st.expander("📈 Advanced Price Chart", expanded=(active in ('advanced-chart','all'))):
+        render_advanced_chart(data_sets)
+
     st.divider()
-    
-    # News feed
-    render_news_feed()
+
+    # News feed (wrapped)
+    with st.expander("📰 Live Crypto & Finance News", expanded=(active in ('news','all'))):
+        render_news_feed()
 
 
 def render_compact_analysis(data_sets, symbol, risk_reward, position_size):
@@ -4475,183 +4492,197 @@ def render_news_feed():
 # ============================================
 
 # --- SIDEBAR ---
-st.sidebar.header("⚙️ Trading Settings")
+if show_sidebar:
+    st.sidebar.header("⚙️ Trading Settings")
 
-# View Mode Selection
-view_mode = st.sidebar.radio(
-    "📊 View Mode",
-    ["Single Asset", "Multi-Asset Comparison"],
-    index=0 if st.session_state.view_mode == "Single Asset" else 1
-)
-st.session_state.view_mode = view_mode
+    # View Mode Selection
+    view_mode = st.sidebar.radio(
+        "📊 View Mode",
+        ["Single Asset", "Multi-Asset Comparison"],
+        index=0 if st.session_state.get('view_mode', 'Single Asset') == "Single Asset" else 1
+    )
+    st.session_state.view_mode = view_mode
 
-st.sidebar.divider()
+    st.sidebar.divider()
 
-# Asset selection based on view mode
-if view_mode == "Single Asset":
-    symbol = st.sidebar.text_input(
-        "Asset Symbol", 
-        value=st.session_state.current_symbol,
-        key="single_symbol_input"
-    ).upper()
-    # Update session state
-    if symbol:
-        st.session_state.current_symbol = symbol
-else:
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        symbol_1 = st.sidebar.text_input(
-            "Asset 1", 
-            value=st.session_state.symbol_1,
-            key="symbol_1_input"
+    # Asset selection based on view mode
+    if view_mode == "Single Asset":
+        symbol = st.sidebar.text_input(
+            "Asset Symbol", 
+            value=st.session_state.get('current_symbol', ''),
+            key="single_symbol_input"
         ).upper()
-        if symbol_1:
-            st.session_state.symbol_1 = symbol_1
-    with col2:
-        symbol_2 = st.sidebar.text_input(
-            "Asset 2", 
-            value=st.session_state.symbol_2,
-            key="symbol_2_input"
-        ).upper()
-        if symbol_2:
-            st.session_state.symbol_2 = symbol_2
+        # Update session state
+        if symbol:
+            st.session_state.current_symbol = symbol
+    else:
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            symbol_1 = st.sidebar.text_input(
+                "Asset 1", 
+                value=st.session_state.get('symbol_1',''),
+                key="symbol_1_input"
+            ).upper()
+            if symbol_1:
+                st.session_state.symbol_1 = symbol_1
+        with col2:
+            symbol_2 = st.sidebar.text_input(
+                "Asset 2", 
+                value=st.session_state.get('symbol_2',''),
+                key="symbol_2_input"
+            ).upper()
+            if symbol_2:
+                st.session_state.symbol_2 = symbol_2
 
-st.sidebar.divider()
+    st.sidebar.divider()
 
-# Manual Refresh Button
-if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
-    st.session_state.last_refresh = datetime.now()
-    try:
-        st.experimental_rerun()
-    except Exception:
-        pass
+    # Manual Refresh Button
+    if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
+        st.session_state.last_refresh = datetime.now()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
-# Auto-refresh toggle
-st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.auto_refresh)
+    # Auto-refresh toggle
+    st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.get('auto_refresh', False))
 
-st.sidebar.divider()
+    st.sidebar.divider()
 
-# Mobile Mode Toggle
-st.session_state.mobile_mode = st.sidebar.checkbox("📱 Mobile Mode (Simplified)", value=st.session_state.mobile_mode)
+    # Mobile Mode Toggle
+    st.session_state.mobile_mode = st.sidebar.checkbox("📱 Mobile Mode (Simplified)", value=st.session_state.get('mobile_mode', False))
 
-st.sidebar.divider()
+    st.sidebar.divider()
 
-# Alert Settings
-st.sidebar.subheader("🔔 Alert Settings")
-st.session_state.alert_threshold = st.sidebar.slider(
-    "Confluence Alert Threshold", 
-    50, 100, st.session_state.alert_threshold,
-    help="Get notified when Sentiment + Technical confluence exceeds this %"
-)
+    # Alert Settings
+    st.sidebar.subheader("🔔 Alert Settings")
+    st.session_state.alert_threshold = st.sidebar.slider(
+        "Confluence Alert Threshold", 
+        50, 100, st.session_state.get('alert_threshold', 90),
+        help="Get notified when Sentiment + Technical confluence exceeds this %"
+    )
 
-# Finnhub API Key (for macro event blackout)
-# Load silently from Streamlit secrets if available. Do NOT expose keys in UI.
-st.session_state['finnhub_api_key'] = st.secrets.get('finnhub_api_key', st.session_state.get('finnhub_api_key', None))
+    # Finnhub API Key (for macro event blackout)
+    # Load silently from Streamlit secrets if available. Do NOT expose keys in UI.
+    st.session_state['finnhub_api_key'] = st.secrets.get('finnhub_api_key', st.session_state.get('finnhub_api_key', None))
 
-if st.sidebar.button("Test Alert 🔔", use_container_width=True):
-    st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
+    if st.sidebar.button("Test Alert 🔔", use_container_width=True):
+        st.sidebar.success("✅ Alert system active! (In production, this would send notifications)")
 
-st.sidebar.divider()
+    st.sidebar.divider()
 
-# Backtest Section
-st.sidebar.subheader("🧪 Backtest & Validation")
-if st.sidebar.button("📊 Run Backtest", use_container_width=True):
-    st.session_state.show_backtest = not st.session_state.show_backtest
-    try:
-        st.experimental_rerun()
-    except Exception:
-        pass
+    # Backtest Section
+    st.sidebar.subheader("🧪 Backtest & Validation")
+    if st.sidebar.button("📊 Run Backtest", use_container_width=True):
+        st.session_state.show_backtest = not st.session_state.get('show_backtest', False)
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
-if st.session_state.show_backtest:
-    st.sidebar.success("✅ Backtest results visible below")
+    if st.session_state.get('show_backtest'):
+        st.sidebar.success("✅ Backtest results visible below")
+    else:
+        st.sidebar.info("Click to view prediction accuracy")
+
+    st.sidebar.divider()
+
+    # Popular Assets Quick Select
+    st.sidebar.subheader("⚡ Quick Select")
+    quick_assets = {
+        'BTC': 'BTC-USD',
+        'Gold': 'GC=F',
+        'Silver': 'SI=F',
+        'DXY': 'DX-Y.NYB',
+        'XRP': 'XRP-USD',
+        'ETH': 'ETH-USD',
+        'S&P500': '^GSPC',
+        'Oil': 'CL=F'
+    }
+
+    cols = st.sidebar.columns(2)
+    for idx, (name, ticker) in enumerate(quick_assets.items()):
+        with cols[idx % 2]:
+            if st.button(name, use_container_width=True, key=f"sidebar_quick_{ticker}"):
+                if view_mode == "Single Asset":
+                    st.session_state.current_symbol = ticker
+                    # Update the single symbol text_input widget state so it reflects the change
+                    try:
+                        st.session_state['single_symbol_input'] = ticker
+                    except Exception:
+                        pass
+                    # rely on session_state update; avoid forced rerun
+                else:
+                    # In multi-asset mode, set to symbol_1 and update widget
+                    st.session_state.symbol_1 = ticker
+                    try:
+                        st.session_state['symbol_1_input'] = ticker
+                    except Exception:
+                        pass
+                    # rely on session_state update; avoid forced rerun
+
+    st.sidebar.divider()
+
+    # --- Full Asset Dropdown with Search ---
+    st.sidebar.subheader("🔎 All Assets (Searchable)")
+    assets_catalog = {
+        'Bitcoin': 'BTC-USD', 'Gold': 'GC=F', 'Silver': 'SI=F', 'DXY': 'DX-Y.NYB', 'XRP': 'XRP-USD',
+        'Ethereum': 'ETH-USD', 'S&P500': '^GSPC', 'Crude Oil': 'CL=F', 'Nasdaq': '^IXIC', 'TSLA': 'TSLA',
+        'AAPL': 'AAPL', 'MSFT': 'MSFT', 'AMZN': 'AMZN', 'NVDA': 'NVDA'
+    }
+
+    search_filter = st.sidebar.text_input("Filter assets", value="")
+    options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
+    if search_filter:
+        options = [o for o in options if search_filter.lower() in o.lower()]
+
+    selected_asset = st.sidebar.selectbox("Choose asset", options, key='asset_dropdown')
+    if selected_asset:
+        # parse ticker
+        m = re.search(r"\(([^)]+)\)", selected_asset)
+        if m:
+            sel_ticker = m.group(1)
+            # Only apply change when selection actually changed to avoid rerun loops
+            last = st.session_state.get('asset_dropdown_last')
+            if last != selected_asset:
+                st.session_state['asset_dropdown_last'] = selected_asset
+                if view_mode == "Single Asset":
+                    st.session_state.current_symbol = sel_ticker
+                    try:
+                        st.session_state['single_symbol_input'] = sel_ticker
+                    except Exception:
+                        pass
+                    # rely on session_state update; avoid forced rerun
+                else:
+                    st.session_state.symbol_1 = sel_ticker
+                    try:
+                        st.session_state['symbol_1_input'] = sel_ticker
+                    except Exception:
+                        pass
+                    try:
+                        st.experimental_rerun()
+                    except Exception:
+                        pass
+
+    # Risk settings
+    st.sidebar.subheader("Risk Management")
+    risk_reward = st.sidebar.slider("Risk:Reward Ratio", 1.0, 3.0, 1.5, 0.5)
+    position_size = st.sidebar.number_input("Position Size ($)", min_value=100, value=1000, step=100)
+
+    st.sidebar.info(f"Last Refresh: {st.session_state.get('last_refresh', datetime.now()).strftime('%H:%M:%S')}")
 else:
-    st.sidebar.info("Click to view prediction accuracy")
-
-st.sidebar.divider()
-
-# Popular Assets Quick Select
-st.sidebar.subheader("⚡ Quick Select")
-quick_assets = {
-    'BTC': 'BTC-USD',
-    'Gold': 'GC=F',
-    'Silver': 'SI=F',
-    'DXY': 'DX-Y.NYB',
-    'XRP': 'XRP-USD',
-    'ETH': 'ETH-USD',
-    'S&P500': '^GSPC',
-    'Oil': 'CL=F'
-}
-
-cols = st.sidebar.columns(2)
-for idx, (name, ticker) in enumerate(quick_assets.items()):
-    with cols[idx % 2]:
-        if st.button(name, use_container_width=True, key=f"sidebar_quick_{ticker}"):
-            if view_mode == "Single Asset":
-                st.session_state.current_symbol = ticker
-                # Update the single symbol text_input widget state so it reflects the change
-                try:
-                    st.session_state['single_symbol_input'] = ticker
-                except Exception:
-                    pass
-                # rely on session_state update; avoid forced rerun
-            else:
-                # In multi-asset mode, set to symbol_1 and update widget
-                st.session_state.symbol_1 = ticker
-                try:
-                    st.session_state['symbol_1_input'] = ticker
-                except Exception:
-                    pass
-                # rely on session_state update; avoid forced rerun
-
-st.sidebar.divider()
-
-# --- Full Asset Dropdown with Search ---
-st.sidebar.subheader("🔎 All Assets (Searchable)")
-assets_catalog = {
-    'Bitcoin': 'BTC-USD', 'Gold': 'GC=F', 'Silver': 'SI=F', 'DXY': 'DX-Y.NYB', 'XRP': 'XRP-USD',
-    'Ethereum': 'ETH-USD', 'S&P500': '^GSPC', 'Crude Oil': 'CL=F', 'Nasdaq': '^IXIC', 'TSLA': 'TSLA',
-    'AAPL': 'AAPL', 'MSFT': 'MSFT', 'AMZN': 'AMZN', 'NVDA': 'NVDA'
-}
-
-search_filter = st.sidebar.text_input("Filter assets", value="")
-options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
-if search_filter:
-    options = [o for o in options if search_filter.lower() in o.lower()]
-
-selected_asset = st.sidebar.selectbox("Choose asset", options, key='asset_dropdown')
-if selected_asset:
-    # parse ticker
-    m = re.search(r"\(([^)]+)\)", selected_asset)
-    if m:
-        sel_ticker = m.group(1)
-        # Only apply change when selection actually changed to avoid rerun loops
-        last = st.session_state.get('asset_dropdown_last')
-        if last != selected_asset:
-            st.session_state['asset_dropdown_last'] = selected_asset
-            if view_mode == "Single Asset":
-                st.session_state.current_symbol = sel_ticker
-                try:
-                    st.session_state['single_symbol_input'] = sel_ticker
-                except Exception:
-                    pass
-                # rely on session_state update; avoid forced rerun
-            else:
-                st.session_state.symbol_1 = sel_ticker
-                try:
-                    st.session_state['symbol_1_input'] = sel_ticker
-                except Exception:
-                    pass
-                try:
-                    st.experimental_rerun()
-                except Exception:
-                    pass
-
-# Risk settings
-st.sidebar.subheader("Risk Management")
-risk_reward = st.sidebar.slider("Risk:Reward Ratio", 1.0, 3.0, 1.5, 0.5)
-position_size = st.sidebar.number_input("Position Size ($)", min_value=100, value=1000, step=100)
-
-st.sidebar.info(f"Last Refresh: {st.session_state.last_refresh.strftime('%H:%M:%S')}")
+    # Sidebar hidden: ensure keys exist and populate sensible defaults
+    st.session_state.setdefault('view_mode', 'Single Asset')
+    st.session_state.setdefault('current_symbol', st.session_state.get('current_symbol', 'BTC-USD'))
+    st.session_state.setdefault('symbol_1', st.session_state.get('symbol_1', 'BTC-USD'))
+    st.session_state.setdefault('symbol_2', st.session_state.get('symbol_2', 'ETH-USD'))
+    st.session_state.setdefault('last_refresh', st.session_state.get('last_refresh', datetime.now()))
+    st.session_state.setdefault('auto_refresh', st.session_state.get('auto_refresh', False))
+    st.session_state.setdefault('mobile_mode', st.session_state.get('mobile_mode', False))
+    st.session_state.setdefault('alert_threshold', st.session_state.get('alert_threshold', 90))
+    st.session_state.setdefault('finnhub_api_key', st.secrets.get('finnhub_api_key', st.session_state.get('finnhub_api_key', None)))
+    st.session_state.setdefault('show_backtest', st.session_state.get('show_backtest', False))
+    st.session_state.setdefault('asset_dropdown_last', st.session_state.get('asset_dropdown_last', None))
 
 # --- MAIN DASHBOARD ---
 st.title(f"📊 Ultimate AI Trading Dashboard")
