@@ -26,7 +26,7 @@ except ImportError:
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide", initial_sidebar_state="expanded")
-APP_BUILD = 'PRECISION-MASTER-2026.08.20-v6'
+APP_BUILD = 'PRECISION-MASTER-2026.08.20-v7'
 
 # Toggle rendering of Streamlit sidebar. Set to False for a clean top-toolbar-only UI.
 show_sidebar = True
@@ -3024,368 +3024,317 @@ def _safe_float(v, default=0.0):
         return default
 
 
-def _precision_master_core(df, timeframe):
-    """Pure historical feature scorer used by BOTH live signal and backtest.
-
-    No network calls, no current order book, and no future/higher-timeframe leakage.
-    The engine intentionally abstains unless trend, momentum, volume and structure agree.
-    """
-    if df is None or len(df) < 55:
-        return {'signal': 'NONE', 'quality': 0.0, 'margin': 0.0, 'reasons': []}
-
-    d = df.copy()
-    required = {'EMA9','EMA21','EMA50','EMA200','RSI','MACD','Signal','ADX','Stoch_K','Stoch_D','ATR','Volume_Ratio','BB_Upper','BB_Lower'}
-    if not required.issubset(d.columns):
-        d = add_indicators(d)
-    row = d.iloc[-1]
-    prev = d.iloc[-2]
-    price = _safe_float(row['Close'])
-    if price <= 0:
-        return {'signal': 'NONE', 'quality': 0.0, 'margin': 0.0, 'reasons': []}
-
-    long_pts = 0.0
-    short_pts = 0.0
-    max_pts = 0.0
-    reasons = []
-
-    def vote(long_ok, short_ok, weight, long_reason, short_reason):
-        nonlocal long_pts, short_pts, max_pts
-        max_pts += weight
-        if long_ok:
-            long_pts += weight
-            reasons.append('✅ ' + long_reason)
-        if short_ok:
-            short_pts += weight
-            reasons.append('✅ ' + short_reason)
-
-    ema9, ema21, ema50, ema200 = map(_safe_float, [row['EMA9'],row['EMA21'],row['EMA50'],row['EMA200']])
-    rsi = _safe_float(row['RSI'], 50)
-    macd, macd_sig = _safe_float(row['MACD']), _safe_float(row['Signal'])
-    adx = _safe_float(row['ADX'])
-    st_k, st_d = _safe_float(row['Stoch_K'], 50), _safe_float(row['Stoch_D'], 50)
-    vol_ratio = _safe_float(row.get('Volume_Ratio', 1.0), 1.0)
-    atr = max(_safe_float(row.get('ATR', 0.0)), 1e-9)
-
-    # 1) Multi-speed EMA structure: strongest single block.
-    vote(price > ema21 and ema9 > ema21 > ema50,
-         price < ema21 and ema9 < ema21 < ema50,
-         2.0, 'EMA stack bullish', 'EMA stack bearish')
-    vote(ema50 > ema200 and price > ema50,
-         ema50 < ema200 and price < ema50,
-         1.5, 'long-term trend bullish', 'long-term trend bearish')
-
-    # 2) MACD direction + fresh acceleration.
-    vote(macd > macd_sig, macd < macd_sig, 1.2, 'MACD positive', 'MACD negative')
-    prev_hist = _safe_float(prev.get('MACD',0)) - _safe_float(prev.get('Signal',0))
-    curr_hist = macd - macd_sig
-    vote(curr_hist > prev_hist and curr_hist > 0,
-         curr_hist < prev_hist and curr_hist < 0,
-         0.8, 'MACD momentum accelerating', 'MACD downside accelerating')
-
-    # 3) RSI: avoid buying exhaustion / shorting capitulation.
-    vote(52 <= rsi <= 68, 32 <= rsi <= 48, 1.2, 'RSI bullish without exhaustion', 'RSI bearish without capitulation')
-
-    # 4) ADX is directionless; it only validates trend strength.
-    max_pts += 1.0
-    if adx >= 22:
-        if long_pts > short_pts:
-            long_pts += 1.0
-            reasons.append(f'✅ ADX trend strength {adx:.1f}')
-        elif short_pts > long_pts:
-            short_pts += 1.0
-            reasons.append(f'✅ ADX trend strength {adx:.1f}')
-
-    # 5) Stochastic confirmation, but reject extreme chasing.
-    vote(st_k > st_d and st_k < 85,
-         st_k < st_d and st_k > 15,
-         0.7, 'stochastic confirms upside', 'stochastic confirms downside')
-
-    # 6) Volume confirmation. Low volume subtracts from both sides.
-    max_pts += 1.0
-    if vol_ratio >= 1.05:
-        if long_pts > short_pts:
-            long_pts += 1.0
-        elif short_pts > long_pts:
-            short_pts += 1.0
-        reasons.append(f'✅ volume confirmation {vol_ratio:.2f}x')
-    elif vol_ratio < 0.60:
-        long_pts = max(0.0, long_pts - 0.8)
-        short_pts = max(0.0, short_pts - 0.8)
-        reasons.append(f'⚠️ low volume {vol_ratio:.2f}x')
-
-    # 7) Breakout/structure relative to PRIOR candles only.
-    prior = d.iloc[-21:-1]
-    if len(prior) >= 10:
-        prior_hi = _safe_float(prior['High'].max())
-        prior_lo = _safe_float(prior['Low'].min())
-        vote(price > prior_hi, price < prior_lo, 1.0, '20-bar breakout', '20-bar breakdown')
-    else:
-        max_pts += 1.0
-
-    # 8) Approximate CVD from historical candles only.
-    cvd = compute_cvd_approx(d, window=20)
-    vote(cvd > 0.08, cvd < -0.08, 0.8, f'CVD buying pressure {cvd:.2f}', f'CVD selling pressure {cvd:.2f}')
-
-    # 9) Candle reversal protection.
-    max_pts += 0.8
-    candle = identify_candle(d) if 'identify_candle' in globals() else ''
-    bullish_patterns = ('Bullish Engulfing','Morning Star','Hammer')
-    bearish_patterns = ('Bearish Engulfing','Evening Star','Shooting Star','Hanging Man')
-    if any(x in str(candle) for x in bullish_patterns):
-        long_pts += 0.8
-        short_pts = max(0.0, short_pts - 0.8)
-        reasons.append(f'✅ bullish reversal: {candle}')
-    elif any(x in str(candle) for x in bearish_patterns):
-        short_pts += 0.8
-        long_pts = max(0.0, long_pts - 0.8)
-        reasons.append(f'✅ bearish reversal: {candle}')
-
-    long_quality = long_pts / max(max_pts, 1e-9)
-    short_quality = short_pts / max(max_pts, 1e-9)
-    margin = abs(long_quality - short_quality)
-    if long_quality > short_quality:
-        signal, quality = 'UP', long_quality
-    else:
-        signal, quality = 'DOWN', short_quality
-
-    # Hard abstention rules. High precision comes from saying NONE often.
-    atr_pct = atr / price * 100
-    if quality < 0.58 or margin < 0.16 or adx < 16 or vol_ratio < 0.35:
-        signal = 'NONE'
-    if signal == 'UP' and rsi >= 74:
-        signal = 'NONE'; reasons.append('⛔ long rejected: RSI exhausted')
-    if signal == 'DOWN' and rsi <= 26:
-        signal = 'NONE'; reasons.append('⛔ short rejected: RSI capitulation')
-    # Reject pathological volatility; thresholds are intentionally broad across asset classes.
-    if atr_pct > 8.0:
-        signal = 'NONE'; reasons.append('⛔ extreme ATR volatility')
-
-    return {
-        'signal': signal, 'quality': float(np.clip(quality,0,1)), 'margin': float(margin),
-        'long_quality': float(long_quality), 'short_quality': float(short_quality),
-        'reasons': reasons[-8:], 'atr': atr, 'cvd': cvd, 'adx': adx,
-        'rsi': rsi, 'volume_ratio': vol_ratio
-    }
-
-
-def generate_master_strict_signal(df, timeframe, min_meta_conf=0.65, min_rule_conf=0.70, tp_atr_mult=1.2, sl_atr_mult=1.0, quality_override=None):
-    """High-precision selective master signal.
-
-    Technical quality is calculated from leakage-safe historical features. The price
-    ensemble is used as a confirmation layer, not as a mandatory trained meta-model,
-    so Strict Master can work immediately even before a meta model is persisted.
-    """
+def _method_agreement(pred, direction):
+    """Agreement of independent ensemble methods with the requested direction (0..1)."""
     try:
-        sp = st.session_state.get('strict_params', {})
-        min_meta_conf = float(sp.get('min_meta_conf', min_meta_conf))
-        min_rule_conf = float(sp.get('min_rule_conf', min_rule_conf))
-        tp_atr_mult = float(sp.get('tp_atr_mult', tp_atr_mult))
-        sl_atr_mult = float(sp.get('sl_atr_mult', sl_atr_mult))
-        if quality_override is not None:
-            min_rule_conf = float(quality_override)
+        current = float(pred['current'])
+        vals = pred.get('method_predictions', {}) or {}
+        if not vals:
+            return 0.0
+        signs=[]
+        for v in vals.values():
+            mv=float(v)-current
+            if abs(mv) <= max(abs(current)*0.00005, 1e-9):
+                continue
+            signs.append('UP' if mv>0 else 'DOWN')
+        if not signs:
+            return 0.0
+        return float(sum(s==direction for s in signs)/len(signs))
+    except Exception:
+        return 0.0
 
-        if df is None or len(df) < 55:
-            return {'signal':'NONE','confidence':0.0,'reason':'Insufficient history'}
-        d = df.copy()
-        if 'ATR' not in d.columns or 'EMA200' not in d.columns:
-            d = add_indicators(d)
 
-        core = _precision_master_core(d, timeframe)
-        if core['signal'] == 'NONE' or core['quality'] < min_rule_conf:
-            return {
-                'signal':'NONE','confidence':core['quality'],'technical_quality':core['quality'],
-                'model_confidence':0.0,'reasons':core['reasons'], 'margin':core['margin']
-            }
+def _classify_precision_regime(d):
+    """Leakage-safe regime classifier for trend/range/chop decisions."""
+    try:
+        r=d.iloc[-1]
+        price=_safe_float(r['Close'])
+        atr=max(_safe_float(r.get('ATR',0)),1e-9)
+        adx=_safe_float(r.get('ADX',0))
+        e21,e50,e200=map(_safe_float,[r.get('EMA21'),r.get('EMA50'),r.get('EMA200')])
+        bb_mid=max(abs(_safe_float(r.get('BB_Middle',price),price)),1e-9)
+        bb_width=(_safe_float(r.get('BB_Upper',price))-_safe_float(r.get('BB_Lower',price)))/bb_mid
+        atr_pct=atr/max(abs(price),1e-9)
+        if atr_pct > 0.045:
+            return 'EXTREME_VOLATILITY'
+        if adx >= 24 and price>e50>e200 and e21>e50:
+            return 'BULL_TREND'
+        if adx >= 24 and price<e50<e200 and e21<e50:
+            return 'BEAR_TREND'
+        if adx < 18 and bb_width < 0.045:
+            return 'RANGE'
+        if adx < 17 and bb_width >= 0.045:
+            return 'CHOP'
+        return 'TRANSITION'
+    except Exception:
+        return 'TRANSITION'
 
-        pred = predict_price_movement(d, timeframe)
-        if pred is None:
-            return {'signal':'NONE','confidence':0.0,'reasons':['Prediction engine unavailable']}
 
-        pred_dir_raw = str(pred.get('direction',''))
-        pred_dir = 'UP' if 'UP' in pred_dir_raw else 'DOWN' if 'DOWN' in pred_dir_raw else 'NEUTRAL'
-        model_conf = _safe_float(pred.get('confidence', 0.0)) / 100.0
+def _precision_master_core(df, timeframe):
+    """V7 pure historical scorer: trend + acceleration + structure + volume + abstention."""
+    if df is None or len(df) < 60:
+        return {'signal':'NONE','quality':0.0,'margin':0.0,'reasons':['Insufficient history']}
+    d=df.copy()
+    required={'EMA9','EMA21','EMA50','EMA200','RSI','MACD','Signal','ADX','Stoch_K','Stoch_D','ATR','Volume_Ratio','BB_Upper','BB_Lower','BB_Middle'}
+    if not required.issubset(d.columns):
+        d=add_indicators(d)
+    row,prev,prev3=d.iloc[-1],d.iloc[-2],d.iloc[-4]
+    price=_safe_float(row['Close'])
+    if price<=0:
+        return {'signal':'NONE','quality':0.0,'margin':0.0,'reasons':['Invalid price']}
 
-        # Optional trained meta-model adds evidence when available; it is no longer required.
-        meta_prob = None
+    regime=_classify_precision_regime(d)
+    long_pts=short_pts=max_pts=0.0
+    reasons=[]
+    def vote(lo,sh,w,lr,sr):
+        nonlocal long_pts,short_pts,max_pts
+        max_pts+=w
+        if lo: long_pts+=w; reasons.append('✅ '+lr)
+        if sh: short_pts+=w; reasons.append('✅ '+sr)
+
+    e9,e21,e50,e200=map(_safe_float,[row['EMA9'],row['EMA21'],row['EMA50'],row['EMA200']])
+    pe9,pe21,pe50=map(_safe_float,[prev['EMA9'],prev['EMA21'],prev['EMA50']])
+    rsi=_safe_float(row['RSI'],50); rsi_prev=_safe_float(prev['RSI'],50); rsi3=_safe_float(prev3['RSI'],50)
+    macd=_safe_float(row['MACD']); ms=_safe_float(row['Signal']); hist=macd-ms
+    phist=_safe_float(prev['MACD'])-_safe_float(prev['Signal'])
+    h3=_safe_float(prev3['MACD'])-_safe_float(prev3['Signal'])
+    adx=_safe_float(row['ADX']); padx=_safe_float(prev['ADX'])
+    st_k,st_d=_safe_float(row['Stoch_K'],50),_safe_float(row['Stoch_D'],50)
+    vr=_safe_float(row.get('Volume_Ratio',1),1)
+    atr=max(_safe_float(row['ATR']),1e-9)
+    atr_pct=atr/max(abs(price),1e-9)
+
+    # Directional structure and longer regime carry the most weight.
+    vote(price>e21 and e9>e21>e50, price<e21 and e9<e21<e50, 2.2, 'fast EMA stack bullish','fast EMA stack bearish')
+    vote(price>e50>e200, price<e50<e200, 2.0, '50/200 regime bullish','50/200 regime bearish')
+
+    # Slopes / acceleration: require indicators to be improving, not merely positive.
+    vote(e9>pe9 and e21>pe21 and e50>=pe50, e9<pe9 and e21<pe21 and e50<=pe50, 1.0, 'EMA slopes rising','EMA slopes falling')
+    vote(hist>0 and hist>phist and phist>=h3, hist<0 and hist<phist and phist<=h3, 1.4, 'MACD histogram accelerating','MACD histogram accelerating down')
+    vote(rsi>52 and rsi>rsi_prev and rsi_prev>=rsi3, rsi<48 and rsi<rsi_prev and rsi_prev<=rsi3, 1.1, 'RSI momentum rising','RSI momentum falling')
+
+    # Trend strength must be present and preferably improving.
+    max_pts+=1.2
+    if adx>=22 and adx>=padx-1:
+        if long_pts>short_pts: long_pts+=1.2; reasons.append(f'✅ ADX confirms trend {adx:.1f}')
+        elif short_pts>long_pts: short_pts+=1.2; reasons.append(f'✅ ADX confirms trend {adx:.1f}')
+
+    vote(st_k>st_d and 25<st_k<82, st_k<st_d and 18<st_k<75, 0.6, 'stochastic supportive','stochastic supportive down')
+
+    # Relative volume is a confirmation, not a direction generator.
+    max_pts+=1.2
+    if vr>=1.15:
+        if long_pts>short_pts: long_pts+=1.2
+        elif short_pts>long_pts: short_pts+=1.2
+        reasons.append(f'✅ relative volume {vr:.2f}x')
+    elif vr<0.70:
+        long_pts=max(0,long_pts-0.9); short_pts=max(0,short_pts-0.9); reasons.append(f'⚠️ weak volume {vr:.2f}x')
+
+    # Structure: breakout OR pullback continuation near EMA21.
+    prior=d.iloc[-21:-1]
+    prior_hi=_safe_float(prior['High'].max()); prior_lo=_safe_float(prior['Low'].min())
+    breakout_up=price>prior_hi
+    breakout_dn=price<prior_lo
+    pullback_up=(price>e21 and _safe_float(row['Low'])<=e21*1.002 and _safe_float(row['Close'])>_safe_float(row['Open']))
+    pullback_dn=(price<e21 and _safe_float(row['High'])>=e21*0.998 and _safe_float(row['Close'])<_safe_float(row['Open']))
+    vote(breakout_up or pullback_up, breakout_dn or pullback_dn, 1.3, 'bullish structure trigger','bearish structure trigger')
+
+    cvd=compute_cvd_approx(d,window=20)
+    vote(cvd>0.10,cvd<-0.10,0.8,f'CVD buying {cvd:.2f}',f'CVD selling {cvd:.2f}')
+
+    # Reject exhausted entry locations.
+    max_pts+=0.8
+    if 50<rsi<72 and long_pts>short_pts: long_pts+=0.8
+    elif 28<rsi<50 and short_pts>long_pts: short_pts+=0.8
+
+    lq=long_pts/max(max_pts,1e-9); sq=short_pts/max(max_pts,1e-9)
+    margin=abs(lq-sq); signal='UP' if lq>sq else 'DOWN'; quality=max(lq,sq)
+
+    # Regime-aware hard filters. Countertrend trades are intentionally suppressed.
+    if regime=='BULL_TREND' and signal=='DOWN': signal='NONE'; reasons.append('⛔ countertrend short blocked')
+    if regime=='BEAR_TREND' and signal=='UP': signal='NONE'; reasons.append('⛔ countertrend long blocked')
+    if regime in ('CHOP','EXTREME_VOLATILITY'): signal='NONE'; reasons.append(f'⛔ regime blocked: {regime}')
+    if quality<0.64 or margin<0.20 or adx<17 or vr<0.45: signal='NONE'
+    if signal=='UP' and rsi>=73: signal='NONE'; reasons.append('⛔ RSI long exhaustion')
+    if signal=='DOWN' and rsi<=27: signal='NONE'; reasons.append('⛔ RSI short exhaustion')
+    if atr_pct>0.06: signal='NONE'; reasons.append('⛔ excessive ATR volatility')
+
+    return {'signal':signal,'quality':float(np.clip(quality,0,1)),'margin':float(margin),
+            'long_quality':float(lq),'short_quality':float(sq),'reasons':reasons[-10:],
+            'atr':atr,'cvd':cvd,'adx':adx,'rsi':rsi,'volume_ratio':vr,'regime':regime,
+            'atr_pct':float(atr_pct)}
+
+
+def _timeframe_context_score(data_sets, direction):
+    """4H->1H->15M->5M hierarchy. Returns score, details, and whether context is usable."""
+    weights={'4h':0.34,'1h':0.30,'15m':0.24,'5m':0.12}
+    score=0.0; used=0.0; details={}
+    for tf,w in weights.items():
         try:
-            model = st.session_state.get('meta_models', {}).get(timeframe)
-            if model is None:
-                path = f'.cache/best_meta_{timeframe}.pkl'
-                if os.path.exists(path):
-                    with open(path,'rb') as f:
-                        model = pickle.load(f).get('model')
-                    if model is not None and model.get('feature_version', 1) < 2:
-                        model = None
-            if model is not None:
-                po = dict(pred)
-                po['df'] = d
-                po['rsi'] = d['RSI'].iloc[-1]
-                po['adx'] = d['ADX'].iloc[-1]
-                po['volume_ratio'] = d['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in d.columns else 1.0
-                meta_prob = float(meta_predict_from_model(po, model))
+            if tf not in data_sets or data_sets[tf] is None or len(data_sets[tf])<60: continue
+            c=_precision_master_core(add_indicators(data_sets[tf].copy()),tf)
+            details[tf]=c.get('signal','NONE')
+            if c.get('signal')==direction: score+=w*c.get('quality',0); used+=w
+            elif c.get('signal') in ('UP','DOWN'): score-=w*c.get('quality',0); used+=w
+            else: used+=w*0.35
         except Exception:
-            meta_prob = None
-
-        # Direction must agree with the price ensemble. If the ensemble is neutral, abstain.
-        if pred_dir != core['signal']:
-            return {
-                'signal':'NONE','confidence':min(core['quality'],model_conf),
-                'technical_quality':core['quality'],'model_confidence':model_conf,
-                'meta_prob':meta_prob,'reasons':core['reasons'] + ['⛔ price ensemble disagrees']
-            }
-
-        # A trained meta model, when present, must also agree directionally.
-        if meta_prob is not None:
-            meta_direction_conf = meta_prob if core['signal']=='UP' else (1-meta_prob)
-            if meta_direction_conf < min_meta_conf:
-                return {
-                    'signal':'NONE','confidence':min(core['quality'],meta_direction_conf),
-                    'technical_quality':core['quality'],'model_confidence':model_conf,
-                    'meta_prob':meta_prob,'reasons':core['reasons'] + ['⛔ trained meta-model disagrees/weak']
-                }
-        else:
-            # Without trained meta model, require modest ensemble confidence; do not deadlock at 0.5.
-            if model_conf < max(0.52, min_meta_conf - 0.12):
-                return {
-                    'signal':'NONE','confidence':min(core['quality'],model_conf),
-                    'technical_quality':core['quality'],'model_confidence':model_conf,
-                    'reasons':core['reasons'] + ['⛔ ensemble confidence below threshold']
-                }
-
-        combined_conf = 0.65*core['quality'] + 0.35*(meta_direction_conf if meta_prob is not None else model_conf)
-        entry = float(d['Close'].iloc[-1])
-        atr = max(_safe_float(core.get('atr', d['ATR'].iloc[-1])), 1e-9)
-        if core['signal']=='UP':
-            tp = entry + tp_atr_mult*atr
-            sl = entry - sl_atr_mult*atr
-        else:
-            tp = entry - tp_atr_mult*atr
-            sl = entry + sl_atr_mult*atr
-
-        return {
-            'signal':core['signal'],'entry':entry,'tp':float(tp),'sl':float(sl),
-            'confidence':float(np.clip(combined_conf,0,1)),
-            'technical_quality':core['quality'],'model_confidence':model_conf,
-            'meta_prob':meta_prob,'margin':core['margin'],'reasons':core['reasons'],
-            'rr':float(tp_atr_mult/max(sl_atr_mult,1e-9))
-        }
-    except Exception as e:
-        return {'signal':'NONE','confidence':0.0,'reasons':[f'Strict engine error: {e}']}
-
-
-def run_backtest_strict_master(df, timeframe, horizon=12, tp_atr_mult=1.2, sl_atr_mult=1.0):
-    """Chronological high-precision backtest for Strict Master.
-
-    Candidate signals are generated once without live/external data. The quality
-    threshold is selected on the older 70% of candidates and reported performance
-    is measured on the newest 30% (held-out test set).
-    """
-    if df is None or len(df) < 120:
-        return {'total_signals':0,'tp_hits':0,'sl_hits':0,'unresolved':0,'accuracy':0.0,'signals':[], 'reason':'Insufficient data'}
-    d = df.copy()
-    if 'ATR' not in d.columns or 'EMA200' not in d.columns:
-        d = add_indicators(d)
-
-    # Keep compute bounded for responsive UI.
-    first = max(55, len(d) - 420)
-    last = len(d) - horizon - 1
-    candidates=[]
-    for i in range(first, last+1):
-        hist=d.iloc[:i+1].copy()
-        core=_precision_master_core(hist,timeframe)
-        if core.get('signal')=='NONE':
             continue
-        pred=predict_price_movement(hist,timeframe)
-        if not pred:
-            continue
+    if used<=0: return 0.0,details,False
+    normalized=float(np.clip((score/max(used,1e-9)+1)/2,0,1))
+    return normalized,details,True
+
+
+def generate_master_strict_signal(df, timeframe, min_meta_conf=0.68, min_rule_conf=0.72, tp_atr_mult=1.25, sl_atr_mult=1.0, quality_override=None, data_sets=None):
+    """Precision Master v7: highly selective, probability/agreement/regime gated signal."""
+    try:
+        sp=st.session_state.get('strict_params',{})
+        min_meta_conf=float(sp.get('min_meta_conf',min_meta_conf)); min_rule_conf=float(sp.get('min_rule_conf',min_rule_conf))
+        tp_atr_mult=float(sp.get('tp_atr_mult',tp_atr_mult)); sl_atr_mult=float(sp.get('sl_atr_mult',sl_atr_mult))
+        if quality_override is not None: min_rule_conf=float(quality_override)
+        if df is None or len(df)<60: return {'signal':'NONE','confidence':0.0,'reasons':['Insufficient history']}
+        d=df.copy()
+        if 'ATR' not in d.columns or 'EMA200' not in d.columns: d=add_indicators(d)
+        core=_precision_master_core(d,timeframe)
+        if core['signal']=='NONE' or core['quality']<min_rule_conf:
+            return {'signal':'NONE','confidence':core['quality'],'technical_quality':core['quality'],'model_confidence':0.0,
+                    'agreement':0.0,'regime':core.get('regime'),'reasons':core['reasons'],'margin':core['margin']}
+
+        pred=predict_price_movement(d,timeframe)
+        if not pred: return {'signal':'NONE','confidence':0.0,'reasons':['Prediction engine unavailable']}
         pdir='UP' if 'UP' in str(pred.get('direction','')) else 'DOWN' if 'DOWN' in str(pred.get('direction','')) else 'NEUTRAL'
-        if pdir != core['signal']:
-            continue
-        model_conf=_safe_float(pred.get('confidence',0))/100.0
-        # Historical backtest cannot use today's persisted/current meta state safely.
-        combined=0.72*core['quality']+0.28*model_conf
-        if model_conf < 0.48:
-            continue
+        if pdir!=core['signal']:
+            return {'signal':'NONE','confidence':core['quality'],'technical_quality':core['quality'],'model_confidence':0.0,
+                    'agreement':0.0,'regime':core.get('regime'),'reasons':core['reasons']+['⛔ ensemble direction disagrees']}
 
+        agreement=_method_agreement(pred,core['signal'])
+        model_conf=_safe_float(pred.get('confidence',0))/100.0
+        # Require independent method voting; this intentionally cuts coverage.
+        if agreement<0.67:
+            return {'signal':'NONE','confidence':min(core['quality'],agreement),'technical_quality':core['quality'],'model_confidence':model_conf,
+                    'agreement':agreement,'regime':core.get('regime'),'reasons':core['reasons']+[f'⛔ method agreement only {agreement*100:.0f}%']}
+
+        # ATR-normalized predicted move: tiny moves are WAIT even if direction agrees.
+        entry=float(d['Close'].iloc[-1]); atr=max(_safe_float(core['atr']),1e-9)
+        predicted_move=abs(float(pred.get('predicted',entry))-entry)
+        move_atr=predicted_move/atr
+        if move_atr<0.22:
+            return {'signal':'NONE','confidence':min(core['quality'],model_conf),'technical_quality':core['quality'],'model_confidence':model_conf,
+                    'agreement':agreement,'regime':core.get('regime'),'reasons':core['reasons']+[f'⛔ predicted move only {move_atr:.2f} ATR']}
+
+        # Optional meta probability. Never use a stale incompatible model.
+        meta_prob=None
+        try:
+            model=st.session_state.get('meta_models',{}).get(timeframe)
+            if model is None:
+                path=f'.cache/best_meta_{timeframe}.pkl'
+                if os.path.exists(path):
+                    with open(path,'rb') as f: model=pickle.load(f).get('model')
+                if model is not None and model.get('feature_version',1)<2: model=None
+            if model is not None:
+                po=dict(pred); po['df']=d; po['rsi']=d['RSI'].iloc[-1]; po['adx']=d['ADX'].iloc[-1]
+                po['volume_ratio']=d['Volume_Ratio'].iloc[-1] if 'Volume_Ratio' in d.columns else 1.0
+                meta_prob=float(meta_predict_from_model(po,model))
+        except Exception: meta_prob=None
+        meta_dir_conf=(meta_prob if core['signal']=='UP' else 1-meta_prob) if meta_prob is not None else None
+        if meta_dir_conf is not None and meta_dir_conf<min_meta_conf:
+            return {'signal':'NONE','confidence':min(core['quality'],meta_dir_conf),'technical_quality':core['quality'],'model_confidence':model_conf,
+                    'agreement':agreement,'meta_prob':meta_prob,'regime':core.get('regime'),'reasons':core['reasons']+['⛔ meta probability below threshold']}
+
+        context_score=0.5; context_details={}; context_available=False
+        if data_sets is not None:
+            context_score,context_details,context_available=_timeframe_context_score(data_sets,core['signal'])
+            # Hierarchy is strongest live filter. 4H/1H disagreement normally forces WAIT.
+            if context_available and context_score<0.60:
+                return {'signal':'NONE','confidence':min(core['quality'],context_score),'technical_quality':core['quality'],'model_confidence':model_conf,
+                        'agreement':agreement,'context_score':context_score,'context':context_details,'regime':core.get('regime'),
+                        'reasons':core['reasons']+['⛔ higher-timeframe hierarchy not aligned']}
+
+        evidence=model_conf if meta_dir_conf is None else (0.45*model_conf+0.55*meta_dir_conf)
+        combined=0.42*core['quality']+0.22*agreement+0.20*evidence+0.16*(context_score if context_available else 0.65)
+        if combined<0.68:
+            return {'signal':'NONE','confidence':combined,'technical_quality':core['quality'],'model_confidence':model_conf,'agreement':agreement,
+                    'context_score':context_score,'context':context_details,'regime':core.get('regime'),'reasons':core['reasons']+['⛔ composite precision threshold not met']}
+        if core['signal']=='UP': tp=entry+tp_atr_mult*atr; sl=entry-sl_atr_mult*atr
+        else: tp=entry-tp_atr_mult*atr; sl=entry+sl_atr_mult*atr
+        return {'signal':core['signal'],'entry':entry,'tp':float(tp),'sl':float(sl),'confidence':float(np.clip(combined,0,1)),
+                'technical_quality':core['quality'],'model_confidence':model_conf,'agreement':agreement,'meta_prob':meta_prob,
+                'context_score':context_score,'context':context_details,'regime':core.get('regime'),'move_atr':move_atr,
+                'margin':core['margin'],'reasons':core['reasons'],'rr':float(tp_atr_mult/max(sl_atr_mult,1e-9))}
+    except Exception as e:
+        return {'signal':'NONE','confidence':0.0,'reasons':[f'Precision Master error: {e}']}
+
+
+def run_backtest_strict_master(df, timeframe, horizon=12, tp_atr_mult=1.25, sl_atr_mult=1.0):
+    """Walk-forward Precision Master v7 backtest optimized for precision, not coverage.
+
+    Uses only information available at each historical point. Candidate quality thresholds
+    are calibrated on the older 70% and evaluated on the newest 30% held-out portion.
+    """
+    if df is None or len(df)<140:
+        return {'total_signals':0,'tp_hits':0,'sl_hits':0,'unresolved':0,'accuracy':0.0,'signals':[],'reason':'Insufficient data'}
+    d=df.copy()
+    if 'ATR' not in d.columns or 'EMA200' not in d.columns: d=add_indicators(d)
+    first=max(60,len(d)-520); last=len(d)-horizon-1; candidates=[]
+    for i in range(first,last+1):
+        hist=d.iloc[:i+1].copy(); core=_precision_master_core(hist,timeframe)
+        if core.get('signal')=='NONE': continue
+        pred=predict_price_movement(hist,timeframe)
+        if not pred: continue
+        pdir='UP' if 'UP' in str(pred.get('direction','')) else 'DOWN' if 'DOWN' in str(pred.get('direction','')) else 'NEUTRAL'
+        if pdir!=core['signal']: continue
+        agreement=_method_agreement(pred,core['signal'])
+        if agreement<0.67: continue
         entry=float(hist['Close'].iloc[-1]); atr=max(_safe_float(core['atr']),1e-9)
-        direction=core['signal']
-        tp=entry+(tp_atr_mult*atr if direction=='UP' else -tp_atr_mult*atr)
-        sl=entry-(sl_atr_mult*atr if direction=='UP' else -sl_atr_mult*atr)
+        move_atr=abs(float(pred.get('predicted',entry))-entry)/atr
+        if move_atr<0.22: continue
+        model_conf=_safe_float(pred.get('confidence',0))/100.0
+        # historical composite excludes current persisted meta and live order book
+        combined=0.56*core['quality']+0.26*agreement+0.18*model_conf
+        direction=core['signal']; tp=entry+(tp_atr_mult*atr if direction=='UP' else -tp_atr_mult*atr); sl=entry-(sl_atr_mult*atr if direction=='UP' else -sl_atr_mult*atr)
         hit=None; bars=None
         for j in range(1,horizon+1):
-            row=d.iloc[i+j]; hi=float(row['High']); lo=float(row['Low'])
-            # Conservative same-bar treatment: if both are touched, count SL.
-            if direction=='UP':
-                tp_hit=hi>=tp; sl_hit=lo<=sl
-            else:
-                tp_hit=lo<=tp; sl_hit=hi>=sl
-            if tp_hit and sl_hit:
-                hit='SL'; bars=j; break
-            if tp_hit:
-                hit='TP'; bars=j; break
-            if sl_hit:
-                hit='SL'; bars=j; break
-        candidates.append({'idx':i,'timestamp':d.index[i],'signal':direction,'entry':entry,'tp':tp,'sl':sl,
-                           'hit':hit,'bars':bars,'quality':core['quality'],'model_conf':model_conf,
-                           'combined_conf':combined,'margin':core['margin']})
-
+            r=d.iloc[i+j]; hi=float(r['High']); lo=float(r['Low'])
+            tp_hit=(hi>=tp if direction=='UP' else lo<=tp); sl_hit=(lo<=sl if direction=='UP' else hi>=sl)
+            if tp_hit and sl_hit: hit='SL'; bars=j; break
+            if tp_hit: hit='TP'; bars=j; break
+            if sl_hit: hit='SL'; bars=j; break
+        # Also evaluate whether a meaningful ATR move occurred in predicted direction.
+        future_close=float(d['Close'].iloc[min(i+horizon,len(d)-1)])
+        directional_move=(future_close-entry)*(1 if direction=='UP' else -1)/atr
+        candidates.append({'idx':i,'timestamp':d.index[i],'signal':direction,'entry':entry,'tp':tp,'sl':sl,'hit':hit,'bars':bars,
+                           'quality':core['quality'],'agreement':agreement,'model_conf':model_conf,'combined_conf':combined,
+                           'move_atr':move_atr,'realized_direction_atr':directional_move,'regime':core.get('regime'),'margin':core['margin']})
     if not candidates:
-        return {'total_signals':0,'tp_hits':0,'sl_hits':0,'unresolved':0,'accuracy':0.0,'signals':[], 'reason':'No candidates passed agreement filters'}
-
-    split=max(1,int(len(candidates)*0.70))
-    train=candidates[:split]
-    test_pool=candidates[split:] if split < len(candidates) else candidates[-max(1,len(candidates)//3):]
-
-    # Calibrate threshold on TRAIN only. Wilson lower bound prevents choosing a threshold
-    # that looks perfect because it produced just one or two lucky trades.
-    def stats_for(rows, threshold):
-        selected=[r for r in rows if r['combined_conf']>=threshold]
-        resolved=[r for r in selected if r['hit'] in ('TP','SL')]
-        wins=sum(r['hit']=='TP' for r in resolved); losses=sum(r['hit']=='SL' for r in resolved)
-        n=len(resolved)
-        acc=wins/n if n else 0.0
+        return {'total_signals':0,'tp_hits':0,'sl_hits':0,'unresolved':0,'accuracy':0.0,'signals':[],'reason':'No candidates passed precision filters'}
+    split=max(1,int(len(candidates)*0.70)); train=candidates[:split]; test=candidates[split:] if split<len(candidates) else candidates[-max(1,len(candidates)//3):]
+    def calc(rows,thr):
+        sel=[r for r in rows if r['combined_conf']>=thr]; res=[r for r in sel if r['hit'] in ('TP','SL')]
+        w=sum(r['hit']=='TP' for r in res); l=sum(r['hit']=='SL' for r in res); n=len(res); acc=w/n if n else 0
         if n:
-            z=1.2816  # ~80% one-sided confidence bound; less punitive for small intraday samples
-            den=1+z*z/n
-            center=(acc+z*z/(2*n))/den
-            half=z*((acc*(1-acc)/n+z*z/(4*n*n))**0.5)/den
-            lower=max(0.0,center-half)
-        else: lower=0.0
-        return selected,resolved,wins,losses,acc,lower
-
-    thresholds=[0.58,0.62,0.66,0.70,0.74,0.78,0.82]
-    best_thr=0.66; best_score=-1
-    min_train=max(4,min(10,len(train)//5 if train else 4))
+            z=1.2816; den=1+z*z/n; center=(acc+z*z/(2*n))/den; half=z*((acc*(1-acc)/n+z*z/(4*n*n))**0.5)/den; lower=max(0,center-half)
+        else: lower=0
+        return sel,res,w,l,acc,lower
+    thresholds=[0.66,0.69,0.72,0.75,0.78,0.81,0.84]
+    best_thr=0.72; best_score=-1; min_train=max(5,min(14,len(train)//6 if train else 5))
     for thr in thresholds:
-        sel,res,w,l,acc,lower=stats_for(train,thr)
-        if len(res)<min_train:
-            continue
-        # Primary objective: conservative precision; small reward for enough samples.
-        score=lower+min(len(res),25)/500.0
-        if score>best_score:
-            best_score=score; best_thr=thr
-
-    selected,resolved,wins,losses,acc,lower=stats_for(test_pool,best_thr)
-    unresolved=sum(r['hit'] is None for r in selected)
-    total=len(selected)
-    accuracy=(wins/len(resolved)*100) if resolved else 0.0
-    coverage=(total/len(test_pool)*100) if test_pool else 0.0
-    avg_hold=float(np.mean([r['bars'] for r in resolved if r['bars']])) if any(r.get('bars') for r in resolved) else 0.0
-    rr=tp_atr_mult/max(sl_atr_mult,1e-9)
-    gross_win=wins*rr; gross_loss=losses*1.0
-    profit_factor=(gross_win/gross_loss) if gross_loss>0 else (float('inf') if gross_win>0 else 0.0)
-    expectancy=((wins*rr-losses)/len(resolved)) if resolved else 0.0
-
-    return {
-        'total_signals':total,'tp_hits':wins,'sl_hits':losses,'unresolved':unresolved,
-        'accuracy':accuracy,'resolved_accuracy':accuracy,'coverage':coverage,
-        'avg_holding_bars':avg_hold,'signals':selected,'quality_threshold':best_thr,
-        'train_candidates':len(train),'test_candidates':len(test_pool),
-        'profit_factor':profit_factor,'expectancy_r':expectancy,
-        'precision_lower_bound':lower*100,'rr':rr,
-        'note':'Threshold calibrated on older 70%; metrics shown on newest 30% held-out candidates.'
-    }
-
+        sel,res,w,l,acc,lower=calc(train,thr)
+        if len(res)<min_train: continue
+        # prioritize lower-bound precision; penalize excessive coverage (>45%)
+        coverage=len(sel)/max(len(train),1)
+        score=lower+min(len(res),30)/600.0-max(0,coverage-0.45)*0.10
+        if score>best_score: best_score=score; best_thr=thr
+    selected,resolved,wins,losses,acc,lower=calc(test,best_thr)
+    unresolved=sum(r['hit'] is None for r in selected); total=len(selected); accuracy=wins/len(resolved)*100 if resolved else 0
+    coverage=total/max(len(test),1)*100; avg_hold=float(np.mean([r['bars'] for r in resolved if r.get('bars')])) if any(r.get('bars') for r in resolved) else 0
+    rr=tp_atr_mult/max(sl_atr_mult,1e-9); gw=wins*rr; gl=losses; pf=gw/gl if gl>0 else (float('inf') if gw>0 else 0); exp=(wins*rr-losses)/len(resolved) if resolved else 0
+    meaningful=[r for r in selected if abs(r['realized_direction_atr'])>=0.35]
+    meaningful_correct=sum(r['realized_direction_atr']>=0.35 for r in meaningful)
+    meaningful_acc=meaningful_correct/len(meaningful)*100 if meaningful else 0
+    return {'total_signals':total,'tp_hits':wins,'sl_hits':losses,'unresolved':unresolved,'accuracy':accuracy,'resolved_accuracy':accuracy,
+            'coverage':coverage,'avg_holding_bars':avg_hold,'signals':selected,'quality_threshold':best_thr,'train_candidates':len(train),
+            'test_candidates':len(test),'profit_factor':pf,'expectancy_r':exp,'precision_lower_bound':lower*100,'rr':rr,
+            'meaningful_direction_accuracy':meaningful_acc,'meaningful_direction_samples':len(meaningful),
+            'note':'V7: threshold calibrated on older 70%; newest 30% held out. Same-bar TP+SL is conservatively counted as SL. Live-only order-book data is excluded.'}
 
 def format_backtest_summary(backtest_results):
     """Creates a formatted summary of backtest results"""
@@ -3685,8 +3634,8 @@ def render_backtest_results(data_sets, symbol):
                         st.table(pd.DataFrame(ablation_rows))
         # Strict master backtest
         st.markdown("---")
-        if st.button('Run Strict Master Backtest'):
-            with st.spinner('Running strict master backtest...'):
+        if st.button('Run Precision Master v7 Backtest'):
+            with st.spinner('Running Precision Master v7 walk-forward backtest...'):
                 df_bt = add_indicators(data_sets[selected_tf].copy())
                 _sp = st.session_state.get('strict_params', {})
                 res = run_backtest_strict_master(
@@ -3695,16 +3644,17 @@ def render_backtest_results(data_sets, symbol):
                     sl_atr_mult=float(_sp.get('sl_atr_mult',1.0))
                 )
                 if res['total_signals'] == 0:
-                    st.warning('No held-out Strict Master trades passed the calibrated quality threshold. This is an abstention, not a forced prediction.')
+                    st.warning('No held-out Precision Master trades passed the calibrated quality threshold. This is an abstention, not a forced prediction.')
                     if res.get('reason'): st.caption(res['reason'])
                 else:
-                    st.success(f"Held-out Strict Master precision: {res['accuracy']:.1f}% on {res['total_signals']} signals")
+                    st.success(f"Held-out Precision Master precision: {res['accuracy']:.1f}% on {res['total_signals']} signals")
                     c1,c2,c3,c4 = st.columns(4)
                     c1.metric('TP / Wins', res['tp_hits'])
                     c2.metric('SL / Losses', res['sl_hits'])
                     c3.metric('Signal Coverage', f"{res['coverage']:.1f}%")
                     c4.metric('Quality Threshold', f"{res['quality_threshold']:.2f}")
                     st.write(f"Conservative precision lower bound: **{res['precision_lower_bound']:.1f}%**")
+                    st.write(f"Meaningful-move direction accuracy (≥0.35 ATR): **{res.get('meaningful_direction_accuracy',0):.1f}%** on **{res.get('meaningful_direction_samples',0)}** signals")
                     _pf = res['profit_factor']
                     st.write(f"Profit factor: **{'∞' if np.isinf(_pf) else f'{_pf:.2f}'}** | Expectancy: **{res['expectancy_r']:.2f}R/trade** | R:R: **{res['rr']:.2f}**")
                     st.caption(res['note'])
@@ -4180,19 +4130,19 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     # Live Strict Master Signal (user-selectable TF)
     active = st.session_state.get('active_section', '')
     st.markdown("<span class='nav-anchor' id='strict-master'></span>", unsafe_allow_html=True)
-    with st.expander("High-Precision Strict Master Signal", expanded=True):
+    with st.expander("Precision Master v7 Signal", expanded=True):
         strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
         st.markdown("<span id='strict-master'></span>", unsafe_allow_html=True)
-        strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
+        strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf, data_sets=data_sets)
         if strict_signal and strict_signal.get('signal') != 'NONE':
             ss = strict_signal
             color = '#00ff00' if ss['signal']=='UP' else ('#ff4b4b' if ss['signal']=='DOWN' else '#808080')
             icon = '🚀' if ss['signal']=='UP' else ('🔻' if ss['signal']=='DOWN' else '⏸️')
             st.markdown(f"""
             <div style="background-color: {color}; padding: 18px; border-radius: 12px; text-align:center;">
-                <h3 style="margin:0">{icon} Strict Master ({strict_tf})</h3>
+                <h3 style="margin:0">{icon} Precision Master v7 ({strict_tf})</h3>
                 <div style="font-size:22px; font-weight:700;">{ss['signal']} — Precision Score: {ss['confidence']*100:.1f}%</div>
-                <div style="margin-top:6px;">Technical Quality: {ss.get('technical_quality',0)*100:.1f}% • Model Agreement: {ss.get('model_confidence',0)*100:.1f}%</div>
+                <div style="margin-top:6px;">Technical: {ss.get('technical_quality',0)*100:.1f}% • Ensemble Confidence: {ss.get('model_confidence',0)*100:.1f}% • Method Agreement: {ss.get('agreement',0)*100:.1f}%</div>
                 <div style="margin-top:8px;">Entry: ${ss['entry']:.4f} • TP: ${ss['tp']:.4f} • SL: ${ss['sl']:.4f} • R:R {ss.get('rr',0):.2f}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -4201,7 +4151,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
             if strict_signal:
                 tq = float(strict_signal.get('technical_quality', strict_signal.get('confidence',0))) * 100
                 mc = float(strict_signal.get('model_confidence',0)) * 100
-                st.caption(f"Current technical quality: {tq:.1f}% | model agreement: {mc:.1f}%")
+                st.caption(f"Current technical quality: {tq:.1f}% | ensemble confidence: {mc:.1f}%")
                 _why = strict_signal.get('reasons', [])
                 if _why:
                     with st.expander('Why no strict trade?', expanded=False):
