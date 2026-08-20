@@ -26,7 +26,7 @@ except ImportError:
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide", initial_sidebar_state="expanded")
-APP_BUILD = "FAST-UI-2026.08.20-v4"
+APP_BUILD = 'FAST-NAV-2026.08.20-v5'
 
 # Toggle rendering of Streamlit sidebar. Set to False for a clean top-toolbar-only UI.
 show_sidebar = True
@@ -3793,7 +3793,8 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     
     # Professional Confluence Analysis (NEW!)
     active = st.session_state.get('active_section', '')
-    with st.expander("🎯 Professional Confluence Analysis", expanded=(active in ('professional-confluence','confluence','confluence-recommendation','score-breakdown','sentiment-analysis','order-flow','market-regime','volume-profile','analysis','all'))):
+    st.markdown("<span class='nav-anchor' id='professional-confluence'></span><span class='nav-anchor' id='score-breakdown'></span><span class='nav-anchor' id='sentiment-analysis'></span><span class='nav-anchor' id='order-flow'></span><span class='nav-anchor' id='market-regime'></span><span class='nav-anchor' id='volume-profile'></span><span class='nav-anchor' id='confluence-recommendation'></span>", unsafe_allow_html=True)
+    with st.expander("🎯 Professional Confluence Analysis", expanded=True):
         st.markdown("<div id='professional-confluence'></div>", unsafe_allow_html=True)
         news_items = get_crypto_news()
         render_professional_confluence(data_sets, symbol, news_items)
@@ -3802,7 +3803,8 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     
     # --- MASTER SIGNALS (TOP PRIORITY) ---
     active = st.session_state.get('active_section', '')
-    with st.expander("🎯 MASTER SIGNALS - All Indicators Combined", expanded=(active in ('analysis','master-signals','all'))):
+    st.markdown("<span class='nav-anchor' id='analysis'></span><span class='nav-anchor' id='master-signals'></span>", unsafe_allow_html=True)
+    with st.expander("🎯 MASTER SIGNALS - All Indicators Combined", expanded=True):
         st.markdown("<span id='analysis'></span><span id='master-signals'></span>", unsafe_allow_html=True)
         st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
         st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
@@ -3957,7 +3959,8 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     # Quick interpretation guide
     # Live Strict Master Signal (user-selectable TF)
     active = st.session_state.get('active_section', '')
-    with st.expander("High-Precision Strict Master Signal", expanded=(active in ('strict-master','master-signals','all'))):
+    st.markdown("<span class='nav-anchor' id='strict-master'></span>", unsafe_allow_html=True)
+    with st.expander("High-Precision Strict Master Signal", expanded=True):
         strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
         st.markdown("<span id='strict-master'></span>", unsafe_allow_html=True)
         strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
@@ -3985,7 +3988,8 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
         """)
 
     # --- AI PRICE PREDICTION ---
-    with st.expander("🤖 AI Price Prediction Engine", expanded=(active in ('ai-prediction','analysis','all'))):
+    st.markdown("<span class='nav-anchor' id='ai-prediction'></span>", unsafe_allow_html=True)
+    with st.expander("🤖 AI Price Prediction Engine", expanded=True):
         st.markdown("<span id='ai-prediction'></span>", unsafe_allow_html=True)
         st.subheader("🤖 AI Price Prediction Engine")
         pred_cols = st.columns([2, 1])
@@ -4054,21 +4058,24 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
         st.divider()
 
     # Multi-timeframe + strategies (wrapped so it can auto-open)
-    with st.expander("⏰ Multi-Timeframe Scanner", expanded=(active in ('multi-timeframe','signal-quality','warnings','ai-trade-setups','all'))):
+    st.markdown("<span class='nav-anchor' id='multi-timeframe'></span><span class='nav-anchor' id='signal-quality'></span><span class='nav-anchor' id='warnings'></span><span class='nav-anchor' id='ai-trade-setups'></span>", unsafe_allow_html=True)
+    with st.expander("⏰ Multi-Timeframe Scanner", expanded=True):
         st.markdown("<span id='multi-timeframe'></span><span id='signal-quality'></span><span id='warnings'></span><span id='ai-trade-setups'></span>", unsafe_allow_html=True)
         render_timeframe_scanner(data_sets, risk_reward, position_size)
 
     st.divider()
 
     # Advanced chart (wrapped)
-    with st.expander("📈 Advanced Price Chart", expanded=(active in ('advanced-chart','all'))):
+    st.markdown("<span class='nav-anchor' id='advanced-chart'></span>", unsafe_allow_html=True)
+    with st.expander("📈 Advanced Price Chart", expanded=True):
         st.markdown("<span id='advanced-chart'></span>", unsafe_allow_html=True)
         render_advanced_chart(data_sets)
 
     st.divider()
 
     # News feed (wrapped)
-    with st.expander("📰 Live Crypto & Finance News", expanded=(active in ('news','all'))):
+    st.markdown("<span class='nav-anchor' id='news'></span>", unsafe_allow_html=True)
+    with st.expander("📰 Live Crypto & Finance News", expanded=True):
         st.markdown("<span id='news'></span>", unsafe_allow_html=True)
         render_news_feed()
 
@@ -4766,6 +4773,16 @@ st.markdown("""
     box-shadow: 0 10px 30px rgba(0,0,0,.22);
 }
 .st-key-top_nav [data-testid="stWidgetLabel"] p {font-size:.76rem; color:#94a3b8; font-weight:600;}
+.nav-menu-wrap {width:100%;}
+.nav-menu-label {font-size:.76rem;color:#94a3b8;font-weight:600;margin:0 0 .25rem .15rem;}
+.nav-menu {position:relative;}
+.nav-menu summary {list-style:none;cursor:pointer;height:2.45rem;display:flex;align-items:center;padding:0 .8rem;border:1px solid rgba(148,163,184,.28);border-radius:10px;background:#0f172a;color:#f8fafc;font-size:.92rem;}
+.nav-menu summary::-webkit-details-marker {display:none;}
+.nav-menu[open] summary {border-bottom-left-radius:0;border-bottom-right-radius:0;}
+.nav-menu-list {position:absolute;z-index:10000;top:2.45rem;left:0;right:0;max-height:390px;overflow:auto;background:#0b1220;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 10px 10px;box-shadow:0 16px 35px rgba(0,0,0,.38);}
+.nav-menu-link {display:block;padding:.62rem .8rem;color:#e2e8f0!important;text-decoration:none!important;font-size:.9rem;border-top:1px solid rgba(148,163,184,.08);}
+.nav-menu-link:hover {background:#172033;color:#fff!important;}
+.nav-anchor {display:block;position:relative;top:-5.8rem;visibility:hidden;}
 .st-key-top_nav button {min-height: 2.45rem; border-radius: 10px; font-weight: 700;}
 [data-testid="stMetric"] {
     border: 1px solid rgba(148,163,184,.16);
@@ -4814,24 +4831,21 @@ if _pending or st.session_state.get('_last_canonical_symbol') != _canonical_symb
 with st.container(key='top_nav'):
     n1, n2, n3, n4, n5 = st.columns([2.5, 1.35, 2.1, 1.0, 0.75])
     with n1:
-        nav_options_html = ''.join([f"<option value='{anchor}'>{label}</option>" for label, anchor in NAV_ITEMS])
-        components.html(f"""
-        <style>
-          html,body{{margin:0;background:transparent;font-family:Arial,sans-serif}}
-          label{{display:block;color:#94a3b8;font-size:12px;font-weight:600;margin:0 0 4px 2px}}
-          select{{width:100%;height:40px;border-radius:9px;border:1px solid #334155;background:#0f172a;color:#f8fafc;padding:0 10px;font-size:14px;outline:none}}
-        </style>
-        <label>Navigate</label>
-        <select id='fast-nav'><option value=''>Jump to section...</option>{nav_options_html}</select>
-        <script>
-          document.getElementById('fast-nav').addEventListener('change', function(){{
-            const id=this.value; if(!id) return;
-            const target=window.parent.document.getElementById(id === 'all' ? 'live-market' : id);
-            if(target) target.scrollIntoView({{behavior:'auto', block:'start'}});
-            this.selectedIndex=0;
-          }});
-        </script>
-        """, height=66)
+        # Pure in-page anchor navigation. This renders in the main Streamlit DOM
+        # (not inside a components iframe), so clicks are immediate and reliable.
+        nav_links = ''.join([
+            f"<a class='nav-menu-link' href='#{'live-market' if anchor == 'all' else anchor}'>{label}</a>"
+            for label, anchor in NAV_ITEMS
+        ])
+        st.markdown(f"""
+        <div class='nav-menu-wrap'>
+          <div class='nav-menu-label'>Navigate</div>
+          <details class='nav-menu'>
+            <summary>Jump to section…</summary>
+            <div class='nav-menu-list'>{nav_links}</div>
+          </details>
+        </div>
+        """, unsafe_allow_html=True)
     with n2:
         st.selectbox('Quick asset', quick_options, key='toolbar_quick_asset', on_change=_on_quick_asset_change)
     with n3:
