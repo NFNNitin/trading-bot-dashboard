@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -13,6 +14,7 @@ from scipy import stats
 import requests
 from collections import Counter
 import re
+from html import escape
 
 # Try to import feedparser, use fallback if not available
 try:
@@ -651,7 +653,7 @@ def compute_cvd_approx(df, window=20):
     return news_items[:10]  # Return top 10 news items
 
 # --- SENTIMENT ANALYSIS ENGINE ---
-def get_sentiment_score(symbol, news_items=None):
+def get_sentiment_score_legacy(symbol, news_items=None):
     """
     Advanced sentiment analysis using NLP on news headlines and social signals
     Returns sentiment score from -100 (extreme bearish) to +100 (extreme bullish)
@@ -828,7 +830,7 @@ def calculate_sentiment_confidence(signals):
     return min(signal_count_factor + agreement_factor, 100)
 
 # --- VOLUME PROFILE ANALYSIS ---
-def calculate_volume_profile(df, num_bins=20):
+def calculate_volume_profile_legacy(df, num_bins=20):
     """
     Calculate volume profile - shows where most trading occurred
     Returns price levels with highest volume (Value Area)
@@ -1878,12 +1880,38 @@ def predict_price_movement(df, timeframe):
     upper_range = curr_price + (atr * 1.5)
     lower_range = curr_price - (atr * 1.5)
     
-    # Overall confidence (normalized)
-    base_confidence = (total_weight / len(predictions)) * 100
-    
-    # Adjust confidence based on volatility
-    volatility_factor = min(atr / curr_price, 0.1) * 100
-    adjusted_confidence = max(min(base_confidence - volatility_factor, 95), 30)
+    # Confidence should reflect agreement, trend quality and volatility -- not just
+    # the sum of arbitrary method weights (which previously saturated near 95%).
+    method_values = np.array(list(predictions.values()), dtype=float)
+    method_moves = (method_values - curr_price) / max(abs(curr_price), 1e-9)
+    ensemble_direction = np.sign(weighted_prediction - curr_price)
+
+    if ensemble_direction == 0:
+        directional_agreement = 0.5
+    else:
+        method_signs = np.sign(method_values - curr_price)
+        active_methods = method_signs != 0
+        directional_agreement = (
+            float(np.mean(method_signs[active_methods] == ensemble_direction))
+            if np.any(active_methods) else 0.5
+        )
+
+    # Lower dispersion among methods = more trustworthy ensemble agreement.
+    dispersion_pct = float(np.std(method_moves) * 100)
+    dispersion_score = max(0.0, 1.0 - min(dispersion_pct / 2.0, 1.0))
+
+    # ADX contributes modestly; it should never dominate confidence by itself.
+    trend_quality = min(max(float(adx) / 40.0, 0.0), 1.0)
+    atr_pct = abs(float(atr) / max(abs(float(curr_price)), 1e-9)) * 100
+    volatility_quality = max(0.0, 1.0 - min(atr_pct / 5.0, 1.0))
+
+    confidence_score = (
+        0.45 * directional_agreement +
+        0.30 * dispersion_score +
+        0.15 * trend_quality +
+        0.10 * volatility_quality
+    ) * 100
+    adjusted_confidence = float(np.clip(confidence_score, 20, 95))
     
     # Ensure TP/SL respect direction (use ATR for adaptive stops)
     tp = None
@@ -1901,7 +1929,12 @@ def predict_price_movement(df, timeframe):
         tp = weighted_prediction
         sl = curr_price - (atr if movement_pct > 0 else -atr)
 
-    direction_label = '📈 UP' if movement_pct > 0 else '📉 DOWN'
+    # Avoid forcing UP/DOWN on statistically tiny moves. Use an ATR-aware dead-zone.
+    neutral_threshold_pct = max(0.05, min((atr / max(abs(curr_price), 1e-9)) * 100 * 0.20, 0.50))
+    if abs(movement_pct) < neutral_threshold_pct:
+        direction_label = '⏸️ NEUTRAL'
+    else:
+        direction_label = '📈 UP' if movement_pct > 0 else '📉 DOWN'
     strength = 'Strong' if abs(movement_pct) > 1 else 'Moderate' if abs(movement_pct) > 0.3 else 'Weak'
 
     return {
@@ -1915,6 +1948,7 @@ def predict_price_movement(df, timeframe):
         'confidence': adjusted_confidence,
         'direction': direction_label,
         'strength': strength,
+        'neutral_threshold_pct': neutral_threshold_pct,
         'method_predictions': predictions,
         'method_weights': weights,
         'adx': adx,
@@ -3594,6 +3628,7 @@ def render_backtest_results(data_sets, symbol):
 def render_professional_confluence(data_sets, symbol, news_items):
     """Renders the professional-grade confluence analysis"""
     
+    st.markdown("<span id='confluence'></span>", unsafe_allow_html=True)
     st.subheader("🎯 Professional Confluence Analysis")
     
     st.info("""
@@ -3685,6 +3720,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
     st.divider()
     
     # Component Breakdown
+    st.markdown("<span id='score-breakdown'></span>", unsafe_allow_html=True)
     st.markdown("### 📊 Score Breakdown (Weighted)")
     
     breakdown_cols = st.columns(5)
@@ -3709,6 +3745,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
     
     with detail_cols[0]:
         # Sentiment Details
+        st.markdown("<span id='sentiment-analysis'></span>", unsafe_allow_html=True)
         st.markdown("#### 📰 Sentiment Analysis")
         if sentiment['signals']:
             for signal in sentiment['signals']:
@@ -3717,6 +3754,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
             st.caption("No strong sentiment signals detected")
         
         # Order Flow Details
+        st.markdown("<span id='order-flow'></span>", unsafe_allow_html=True)
         st.markdown("#### 💼 Order Flow Analysis")
         if order_flow and order_flow['signals']:
             st.markdown(f"**{order_flow['classification']}** (Strength: {order_flow['strength']:+d})")
@@ -3727,6 +3765,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
     
     with detail_cols[1]:
         # Regime Details
+        st.markdown("<span id='market-regime'></span>", unsafe_allow_html=True)
         st.markdown("#### 🎯 Market Regime")
         if regime:
             st.markdown(f"**{regime['regime']}**")
@@ -3736,6 +3775,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
             st.caption(f"• Confidence: {regime['confidence']}")
         
         # Volume Profile
+        st.markdown("<span id='volume-profile'></span>", unsafe_allow_html=True)
         st.markdown("#### 📊 Volume Profile")
         if volume_profile:
             current_price = df_1h['Close'].iloc[-1]
@@ -3767,6 +3807,7 @@ def render_professional_confluence(data_sets, symbol, news_items):
         """)
     
     # Trading Recommendation
+    st.markdown("<span id='confluence-recommendation'></span>", unsafe_allow_html=True)
     st.markdown("### 💡 Confluence-Based Recommendation")
     
     if score >= 80:
@@ -3851,7 +3892,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     
     # Professional Confluence Analysis (NEW!)
     active = st.session_state.get('active_section', '')
-    with st.expander("🎯 Professional Confluence Analysis", expanded=(active in ('professional-confluence','analysis','all'))):
+    with st.expander("🎯 Professional Confluence Analysis", expanded=(active in ('professional-confluence','confluence','confluence-recommendation','score-breakdown','sentiment-analysis','order-flow','market-regime','volume-profile','analysis','all'))):
         st.markdown("<div id='professional-confluence'></div>", unsafe_allow_html=True)
         news_items = get_crypto_news()
         render_professional_confluence(data_sets, symbol, news_items)
@@ -3861,7 +3902,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     # --- MASTER SIGNALS (TOP PRIORITY) ---
     active = st.session_state.get('active_section', '')
     with st.expander("🎯 MASTER SIGNALS - All Indicators Combined", expanded=(active in ('analysis','master-signals','all'))):
-        st.markdown("<div id='analysis'></div>", unsafe_allow_html=True)
+        st.markdown("<span id='analysis'></span><span id='master-signals'></span>", unsafe_allow_html=True)
         st.subheader("🎯 MASTER SIGNALS - All Indicators Combined")
         st.caption("Ultimate calculated signals considering ALL factors: technical indicators, volume, momentum, risk, conflicts, candles, and sentiment")
     
@@ -4017,7 +4058,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
     active = st.session_state.get('active_section', '')
     with st.expander("High-Precision Strict Master Signal", expanded=(active in ('strict-master','master-signals','all'))):
         strict_tf = st.selectbox("Strict Master Signal Timeframe:", ['5m','15m','30m','1h','4h'], index=3)
-        st.markdown("<div id='master-signal'></div>", unsafe_allow_html=True)
+        st.markdown("<span id='strict-master'></span>", unsafe_allow_html=True)
         strict_signal = generate_master_strict_signal(add_indicators(data_sets[strict_tf]), strict_tf)
         if strict_signal and strict_signal.get('signal') != 'NONE':
             ss = strict_signal
@@ -4044,6 +4085,7 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
 
     # --- AI PRICE PREDICTION ---
     with st.expander("🤖 AI Price Prediction Engine", expanded=(active in ('ai-prediction','analysis','all'))):
+        st.markdown("<span id='ai-prediction'></span>", unsafe_allow_html=True)
         st.subheader("🤖 AI Price Prediction Engine")
         pred_cols = st.columns([2, 1])
         with pred_cols[0]:
@@ -4111,19 +4153,22 @@ def render_single_asset_view(data_sets, symbol, risk_reward, position_size):
         st.divider()
 
     # Multi-timeframe + strategies (wrapped so it can auto-open)
-    with st.expander("⏰ Multi-Timeframe Scanner", expanded=(active in ('multi-timeframe','all'))):
+    with st.expander("⏰ Multi-Timeframe Scanner", expanded=(active in ('multi-timeframe','signal-quality','warnings','ai-trade-setups','all'))):
+        st.markdown("<span id='multi-timeframe'></span><span id='signal-quality'></span><span id='warnings'></span><span id='ai-trade-setups'></span>", unsafe_allow_html=True)
         render_timeframe_scanner(data_sets, risk_reward, position_size)
 
     st.divider()
 
     # Advanced chart (wrapped)
     with st.expander("📈 Advanced Price Chart", expanded=(active in ('advanced-chart','all'))):
+        st.markdown("<span id='advanced-chart'></span>", unsafe_allow_html=True)
         render_advanced_chart(data_sets)
 
     st.divider()
 
     # News feed (wrapped)
     with st.expander("📰 Live Crypto & Finance News", expanded=(active in ('news','all'))):
+        st.markdown("<span id='news'></span>", unsafe_allow_html=True)
         render_news_feed()
 
 
@@ -4695,174 +4740,190 @@ else:
     st.session_state.setdefault('asset_dropdown_last', st.session_state.get('asset_dropdown_last', None))
 
 # --- MAIN DASHBOARD ---
-st.title(f"📊 Ultimate AI Trading Dashboard")
+NAV_ITEMS = [
+    ('Live Market Feed', 'live-market'),
+    ('Analysis / Master Signals', 'analysis'),
+    ('Score Breakdown', 'score-breakdown'),
+    ('Sentiment Analysis', 'sentiment-analysis'),
+    ('Order Flow Analysis', 'order-flow'),
+    ('Market Regime', 'market-regime'),
+    ('Volume Profile', 'volume-profile'),
+    ('Confluence Recommendation', 'confluence-recommendation'),
+    ('Master Signals', 'master-signals'),
+    ('Strict Master Signal', 'strict-master'),
+    ('AI Prediction Engine', 'ai-prediction'),
+    ('Multi-Timeframe Scanner', 'multi-timeframe'),
+    ('Signal Quality Check', 'signal-quality'),
+    ('Important Warnings', 'warnings'),
+    ('AI Trade Setups', 'ai-trade-setups'),
+    ('Advanced Price Chart', 'advanced-chart'),
+    ('News', 'news'),
+    ('All Modules', 'all'),
+]
+NAV_LABEL_BY_ID = {anchor: label for label, anchor in NAV_ITEMS}
+NAV_ID_BY_LABEL = {label: anchor for label, anchor in NAV_ITEMS}
 
-# Compact top toolbar with dropdown panels and quick navigation buttons
-toolbar = st.container()
-with toolbar:
-    left, mid, right = st.columns([2,6,3])
-    with left:
-        panel = st.selectbox('', ['View & Assets','Appearance & Strict','Quick Select & Risk','All Controls'], index=0, key='toolbar_panel', help='Choose control group to show')
-    with mid:
-                # Fixed styled HTML menu for navigation (expanded items + tooltips)
-                nav_items = [
-                        ('Live Market Feed','live-market'),
-                        ('Analysis','analysis'),
-                        ('Score Breakdown (Weighted)','score-breakdown'),
-                        ('Sentiment Analysis','sentiment-analysis'),
-                        ('Order Flow Analysis','order-flow'),
-                        ('Market Regime','market-regime'),
-                        ('Volume Profile','volume-profile'),
-                        ('Confluence Recommendation','confluence'),
-                        ('Master Signals','master-signals'),
-                        ('Strict Master Signal','strict-master'),
-                        ('AI Prediction Engine','ai-prediction'),
-                        ('Multi-Timeframe Scanner','multi-timeframe'),
-                        ('Signal Quality Check','signal-quality'),
-                        ('Important Warnings','warnings'),
-                        ('AI Trade Setups','ai-trade-setups'),
-                        ('Advanced Price Chart','advanced-chart'),
-                        ('News','news'),
-                        ('All','all')
-                ]
-                active = st.session_state.get('active_section', 'live-market')
-                # human-readable tooltips for each menu item (shown on hover)
-                tooltips = {
-                    'live-market': 'Live price tickers, orderbook snapshot, recent trades and market depth.',
-                    'analysis': 'Aggregate technical indicators, EMA/MA overlays, and trend signals.',
-                    'score-breakdown': 'Weighted breakdown of each sub-signal contributing to the final score.',
-                    'sentiment-analysis': 'News + price-action sentiment scoring with confidence.',
-                    'order-flow': 'Order-book imbalance, CVD approximations and microstructure signals.',
-                    'market-regime': 'Trend vs range classification and regime heuristics (ADX-like).',
-                    'volume-profile': 'Value Area, POC, VAH/VAL from recent candles.',
-                    'confluence': 'Combined recommendation from multiple indicators and timeframes.',
-                    'master-signals': 'Final stacked signals combining rules, meta-model and filters.',
-                    'strict-master': 'High-precision master signal with strict TP/SL and timeframe filters.',
-                    'ai-prediction': 'AI model predictions and confidence for next-period price moves.',
-                    'multi-timeframe': 'Scanner across 1m/5m/15m/1h/4h to surface aligned setups.',
-                    'signal-quality': 'Checks for low-volume, conflicting signals, and reliability score.',
-                    'warnings': 'Important market warnings like macro events, halts, or blackouts.',
-                    'ai-trade-setups': 'AI-suggested trade setups including entries, stops and targets.',
-                    'advanced-chart': 'Interactive advanced price chart with overlays and drawing tools.',
-                    'news': 'Latest curated finance and crypto news headlines.',
-                    'all': 'Jump to the full page overview with every module.'
-                }
-
-                # Smaller, compact toolbar with dropdown for all items and a few primary buttons
-                menu_html = """
-                <style>
-                /* Clean professional fixed toolbar */
-                #fixedToolbar{position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center; justify-content:space-between; padding:8px 14px; box-shadow:0 8px 28px rgba(2,6,23,0.45); background:linear-gradient(90deg,#071127, #0b1f2f); font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;}
-                .toolbar-left{display:flex; gap:12px; align-items:center}
-                .brand{color:#fff; font-weight:700; letter-spacing:0.4px; font-size:14px}
-                .primary-btn{padding:6px 10px; border-radius:8px; background:transparent; color:#dbeafe; border:none; cursor:pointer; font-weight:600; font-size:13px}
-                .primary-btn:hover{background:rgba(255,255,255,0.04)}
-                .toolbar-select{padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); color:#e6eef8; font-size:13px}
-                /* Tooltip styling: white background and dark text for readability */
-                .toolbar-select option{color:#111}
-                .toolbar-menu .item::after{content: attr(data-tooltip); position:absolute; left:50%; transform:translateX(-50%); bottom:-54px; background:#ffffff; color:#071127; padding:8px 10px; border-radius:6px; white-space:nowrap; font-size:12px; opacity:0; pointer-events:none; transition:opacity .12s ease, transform .12s ease; box-shadow:0 12px 32px rgba(2,6,23,0.12)}
-                .toolbar-menu .item:hover::after{opacity:1; transform:translateX(-50%) translateY(-6px)}
-                body{padding-top:78px !important}
-                @media (max-width:900px){ body{padding-top:130px !important} }
-                </style>
-                <div id="fixedToolbar">
-                    <div class="toolbar-left">
-                        <div class="brand">Pro AI Trader</div>
-                        <button class="primary-btn" onclick="setSection('live-market')">Live Market</button>
-                        <button class="primary-btn" onclick="setSection('analysis')">Analysis</button>
-                        <button class="primary-btn" onclick="setSection('master-signals')">Master Signals</button>
-                        <button class="primary-btn" onclick="setSection('all')">All</button>
-                    </div>
-                    <div style='display:flex; gap:8px; align-items:center'>
-                        <select id='toolbarAllSelect' class='toolbar-select' onchange="(function(){const v=this.value; if(!v) return; const u=new URL(window.location); u.searchParams.set('section', v); window.location=u.toString(); }).call(this)">
-                            <option value=''>Jump to...</option>
-                """
-                # populate select options
-                for label, anchor in nav_items:
-                        menu_html += "<option value='" + anchor + "'>" + label + "</option>"
-                menu_html += """
-                        </select>
-                        <select id='toolbarQuickAsset' class='toolbar-select' onchange="(function(){const v=this.value;const u=new URL(window.location);u.searchParams.set('symbol',v);window.location=u.toString();}).call(this)">
-                            <option>BTC-USD</option>
-                            <option>ETH-USD</option>
-                            <option>GC=F</option>
-                            <option>AAPL</option>
-                            <option>^GSPC</option>
-                        </select>
-                        <button id='toolbarRefreshBtn' class='primary-btn' style='background:#0b84ff;color:#fff;'>🔄</button>
-                    </div>
-                </div>
-                <script>
-                function setSection(anchor){
-                    try{
-                        const u=new URL(window.location);
-                        u.searchParams.set('section',anchor);
-                        // Navigate (full reload) so server-side expanders can open for that section
-                        window.location = u.toString();
-                    }catch(e){
-                        try{ const u=new URL(window.location); u.searchParams.set('section',anchor); window.location=u.toString(); }catch(_){}
-                    }
-                }
-                document.addEventListener('DOMContentLoaded', function(){
-                        try{
-                                const params = new URLSearchParams(window.location.search);
-                                const sec = params.get('section');
-                                if(sec){
-                                        const el = document.getElementById(sec);
-                                        if(el){ setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120); }
-                                }
-                        }catch(e){}
-                        try{
-                            const r = document.getElementById('toolbarRefreshBtn');
-                            if(r) r.onclick = function(){ const u=new URL(window.location); u.searchParams.set('refresh','1'); window.location = u.toString(); };
-                        }catch(e){}
-                });
-                </script>
-                """
-                st.markdown(menu_html, unsafe_allow_html=True)
-    with right:
-        quick_asset = st.selectbox('', ['BTC-USD','ETH-USD','GC=F','AAPL','^GSPC'], index=0, key='toolbar_quick_asset')
-        if st.button('🔄', key='toolbar_refresh'):
-            st.session_state.last_refresh = datetime.now()
-            try:
-                st.experimental_rerun()
-            except Exception:
-                pass
-
-# Top toolbar: searchable asset dropdown (duplicate of sidebar 'All Assets')
-assets_catalog_top = {
-    'Bitcoin': 'BTC-USD', 'Gold': 'GC=F', 'Silver': 'SI=F', 'DXY': 'DX-Y.NYB', 'XRP': 'XRP-USD',
-    'Ethereum': 'ETH-USD', 'S&P500': '^GSPC', 'Crude Oil': 'CL=F', 'Nasdaq': '^IXIC', 'TSLA': 'TSLA',
-    'AAPL': 'AAPL', 'MSFT': 'MSFT', 'AMZN': 'AMZN', 'NVDA': 'NVDA'
+ASSETS_CATALOG = {
+    'Bitcoin': 'BTC-USD', 'Ethereum': 'ETH-USD', 'XRP': 'XRP-USD',
+    'Gold': 'GC=F', 'Silver': 'SI=F', 'Crude Oil': 'CL=F', 'DXY': 'DX-Y.NYB',
+    'S&P 500': '^GSPC', 'Nasdaq': '^IXIC', 'Apple': 'AAPL', 'Microsoft': 'MSFT',
+    'Amazon': 'AMZN', 'NVIDIA': 'NVDA', 'Tesla': 'TSLA'
 }
+ASSET_LABELS = [f"{name} ({ticker})" for name, ticker in ASSETS_CATALOG.items()]
 
-top_search, top_select = st.columns([2,5])
-with top_search:
-    _filter = st.text_input('', value='', placeholder='Filter assets...', key='top_asset_filter')
-with top_select:
-    top_options = [f"{name} ({ticker})" for name, ticker in assets_catalog_top.items()]
-    if _filter:
-        top_options = [o for o in top_options if _filter.lower() in o.lower()]
-    top_selected = st.selectbox('', top_options, key='top_asset_dropdown')
-    if top_selected:
-        m = re.search(r"\(([^)]+)\)", top_selected)
-        if m:
-            sel_ticker = m.group(1)
-            last = st.session_state.get('asset_dropdown_last')
-            if last != top_selected:
-                st.session_state['asset_dropdown_last'] = top_selected
-                if st.session_state.get('view_mode','Single Asset') == 'Single Asset':
-                    st.session_state.current_symbol = sel_ticker
-                    try:
-                        st.session_state['single_symbol_input'] = sel_ticker
-                    except Exception:
-                        pass
-                else:
-                    st.session_state.symbol_1 = sel_ticker
-                    try:
-                        st.session_state['symbol_1_input'] = sel_ticker
-                    except Exception:
-                        pass
+
+def _safe_rerun():
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+
+def _sync_symbol_widgets(ticker):
+    """Update the canonical symbol without mutating already-rendered widgets."""
+    ticker = str(ticker).strip().upper()
+    if not ticker:
+        return
+    if st.session_state.get('view_mode', 'Single Asset') == 'Single Asset':
+        st.session_state.current_symbol = ticker
+    else:
+        st.session_state.symbol_1 = ticker
+
+
+def _on_nav_change():
+    label = st.session_state.get('nav_destination')
+    anchor = NAV_ID_BY_LABEL.get(label, 'live-market')
+    st.session_state.active_section = anchor
+    try:
+        st.query_params['section'] = anchor
+    except Exception:
+        pass
+
+
+def _on_quick_asset_change():
+    _sync_symbol_widgets(st.session_state.get('toolbar_quick_asset', 'BTC-USD'))
+
+
+def _on_asset_dropdown_change():
+    selected = st.session_state.get('top_asset_dropdown')
+    if not selected:
+        return
+    match = re.search(r"\(([^)]+)\)", selected)
+    if match:
+        _sync_symbol_widgets(match.group(1))
+
+
+def _scroll_to_active_section():
+    """Best-effort scroll in the parent Streamlit document after the rerun completes."""
+    anchor = st.session_state.get('active_section', 'live-market')
+    if anchor == 'all':
+        anchor = 'live-market'
+    safe_anchor = re.sub(r'[^a-zA-Z0-9_-]', '', str(anchor))
+    components.html(f"""
+    <script>
+    (function() {{
+      let tries = 0;
+      const timer = setInterval(function() {{
+        tries += 1;
+        try {{
+          const el = window.parent.document.getElementById('{safe_anchor}');
+          if (el) {{
+            el.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+            clearInterval(timer);
+          }} else if (tries > 20) {{ clearInterval(timer); }}
+        }} catch (e) {{ clearInterval(timer); }}
+      }}, 150);
+    }})();
+    </script>
+    """, height=0, width=0)
+
+
+# Normalize old state values from previous UI versions.
+if st.session_state.get('active_section') == 'Overview':
+    st.session_state.active_section = 'live-market'
+if st.session_state.get('view_mode') == 'Multi Asset':
+    st.session_state.view_mode = 'Multi-Asset Comparison'
+
+st.markdown("<span id='page-top'></span>", unsafe_allow_html=True)
+st.title("📊 Pro AI Trader")
+st.caption("Multi-timeframe market intelligence, trade-quality scoring and risk-aware prediction dashboard")
+
+# Professional sticky control bar. Native Streamlit widgets are used so every control is functional.
+st.markdown("""
+<style>
+.st-key-top_nav {
+    position: sticky;
+    top: 0.35rem;
+    z-index: 999;
+    padding: 0.75rem 0.9rem 0.45rem 0.9rem;
+    margin-bottom: 0.8rem;
+    border: 1px solid rgba(148,163,184,.22);
+    border-radius: 14px;
+    background: rgba(10,18,32,.94);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px rgba(0,0,0,.22);
+}
+.st-key-top_nav [data-testid="stWidgetLabel"] p {font-size:.76rem; color:#94a3b8; font-weight:600;}
+.st-key-top_nav button {min-height: 2.45rem; border-radius: 10px; font-weight: 700;}
+[data-testid="stMetric"] {
+    border: 1px solid rgba(148,163,184,.16);
+    border-radius: 12px;
+    padding: .8rem 1rem;
+    background: rgba(15,23,42,.38);
+}
+div[data-testid="stExpander"] {border:1px solid rgba(148,163,184,.18); border-radius:12px; overflow:hidden;}
+.block-container {max-width: 1500px; padding-top: 1.2rem; padding-bottom: 3rem;}
+h1, h2, h3 {letter-spacing:-0.02em;}
+</style>
+""", unsafe_allow_html=True)
+
+active_id = st.session_state.get('active_section', 'live-market')
+active_label = NAV_LABEL_BY_ID.get(active_id, 'Live Market Feed')
+if st.session_state.get('nav_destination') not in NAV_ID_BY_LABEL:
+    st.session_state.nav_destination = active_label
+
+quick_options = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'GC=F', 'SI=F', '^GSPC', 'AAPL', 'NVDA']
+current_for_quick = st.session_state.get('current_symbol', 'BTC-USD')
+if current_for_quick not in quick_options:
+    current_for_quick = 'BTC-USD'
+if st.session_state.get('toolbar_quick_asset') not in quick_options:
+    st.session_state.toolbar_quick_asset = current_for_quick
+
+# Keep searchable selector aligned to the active symbol at first render.
+def _asset_label_for_ticker(ticker):
+    for label in ASSET_LABELS:
+        if label.endswith(f"({ticker})"):
+            return label
+    return ASSET_LABELS[0]
+
+if st.session_state.get('top_asset_dropdown') not in ASSET_LABELS:
+    st.session_state.top_asset_dropdown = _asset_label_for_ticker(st.session_state.get('current_symbol', 'BTC-USD'))
+
+with st.container(key='top_nav'):
+    n1, n2, n3, n4, n5 = st.columns([2.5, 1.35, 2.1, 1.0, 0.75])
+    with n1:
+        st.selectbox('Navigate', [label for label, _ in NAV_ITEMS], key='nav_destination', on_change=_on_nav_change)
+    with n2:
+        st.selectbox('Quick asset', quick_options, key='toolbar_quick_asset', on_change=_on_quick_asset_change)
+    with n3:
+        st.selectbox('Asset search', ASSET_LABELS, key='top_asset_dropdown', on_change=_on_asset_dropdown_change)
+    with n4:
+        panel = st.selectbox('Controls', ['View & Assets','Quick Select & Risk','Appearance & Strict','All Controls'], key='toolbar_panel')
+    with n5:
+        if st.button('↻ Refresh', key='toolbar_refresh', use_container_width=True):
+            st.session_state.last_refresh = datetime.now()
+            st.session_state.sentiment_cache = {}
+            _safe_rerun()
+
+# Compact status line makes state obvious after every selection.
+st.caption(
+    f"Active: **{st.session_state.get('current_symbol','BTC-USD')}**  ·  "
+    f"Section: **{NAV_LABEL_BY_ID.get(st.session_state.get('active_section','live-market'),'Live Market Feed')}**  ·  "
+    f"Updated: **{st.session_state.get('last_refresh', datetime.now()).strftime('%H:%M:%S')}**"
+)
 
 # Sync small toolbar appearance controls into main session_state so they apply globally
 if 'toolbar_compact' in st.session_state:
@@ -4880,7 +4941,7 @@ if 'toolbar_show_toolbar' in st.session_state:
 if st.session_state.get('toolbar_panel','View & Assets') == 'View & Assets':
     r1, r2, r3 = st.columns([2,3,3])
     with r1:
-        view = st.radio('', ['Single Asset','Multi Asset'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, horizontal=True, key='toolbar_view')
+        view = st.radio('', ['Single Asset','Multi-Asset Comparison'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, horizontal=True, key='toolbar_view')
         st.session_state.view_mode = view
     with r2:
         single = st.text_input('Single Asset', value=st.session_state.get('current_symbol','BTC-USD'), key='toolbar_single')
@@ -4922,16 +4983,22 @@ elif st.session_state.get('toolbar_panel') == 'Quick Select & Risk':
         qcols = st.columns(len(quick_map))
         for idx, (name, ticker) in enumerate(quick_map.items()):
             if qcols[idx].button(name, key=f'toolbar_quick_{ticker}'):
-                st.session_state.current_symbol = ticker
+                _sync_symbol_widgets(ticker)
+                st.session_state.toolbar_quick_asset = ticker if ticker in quick_options else st.session_state.get('toolbar_quick_asset','BTC-USD')
+                st.session_state.top_asset_dropdown = _asset_label_for_ticker(ticker)
+                _safe_rerun()
     with q2:
         assets_catalog = {'Bitcoin':'BTC-USD','Gold':'GC=F','Silver':'SI=F','DXY':'DX-Y.NYB','XRP':'XRP-USD','Ethereum':'ETH-USD','S&P500':'^GSPC','Crude Oil':'CL=F','TSLA':'TSLA','AAPL':'AAPL','MSFT':'MSFT','AMZN':'AMZN','NVDA':'NVDA'}
         options = [f"{name} ({ticker})" for name, ticker in assets_catalog.items()]
+        if st.session_state.get('toolbar_choose_asset') not in options:
+            st.session_state.toolbar_choose_asset = _asset_label_for_ticker(st.session_state.get('current_symbol','BTC-USD'))
         sel = st.selectbox('', options, key='toolbar_choose_asset')
-        if sel:
+        if st.button('Apply Asset', key='toolbar_apply_asset', use_container_width=True):
             m = re.search(r"\(([^)]+)\)", sel)
             if m:
-                st.session_state.current_symbol = m.group(1)
-                st.session_state['asset_dropdown_last'] = sel
+                _sync_symbol_widgets(m.group(1))
+                st.session_state.top_asset_dropdown = _asset_label_for_ticker(m.group(1))
+                _safe_rerun()
         st.slider('Risk:Reward', 1.0, 3.0, st.session_state.get('risk_reward',1.5), 0.5, key='toolbar_rr')
         st.number_input('Position Size ($)', min_value=100, value=st.session_state.get('position_size',1000), step=100, key='toolbar_pos')
 
@@ -4941,27 +5008,7 @@ else:
 # Sidebar is always visible; no restore controls required
 
 # --- LIVE PRICE TICKER ---
-# Invisible anchors for toolbar navigation (targets for each menu item)
-st.markdown("""
-<div id='live-market'></div>
-<div id='analysis'></div>
-<div id='score-breakdown'></div>
-<div id='sentiment-analysis'></div>
-<div id='order-flow'></div>
-<div id='market-regime'></div>
-<div id='volume-profile'></div>
-<div id='confluence'></div>
-<div id='master-signals'></div>
-<div id='strict-master'></div>
-<div id='ai-prediction'></div>
-<div id='multi-timeframe'></div>
-<div id='signal-quality'></div>
-<div id='warnings'></div>
-<div id='ai-trade-setups'></div>
-<div id='advanced-chart'></div>
-<div id='news'></div>
-<div id='all'></div>
-""", unsafe_allow_html=True)
+st.markdown("<span id='live-market'></span><span id='all'></span>", unsafe_allow_html=True)
 st.subheader("🌐 Live Market Feed")
 live_prices = get_live_prices()
 
@@ -5024,19 +5071,15 @@ else:
         else:
             st.error(f"Unable to fetch data for {st.session_state.symbol_2}")
 
-# --- AUTO-REFRESH LOGIC ---
-if st.session_state.auto_refresh:
-    time.sleep(60)
-    try:
-        st.experimental_rerun()
-    except Exception:
-        pass
+# --- NON-BLOCKING AUTO-REFRESH + NAVIGATION SCROLL ---
+# Avoid time.sleep() in Streamlit: it blocks the session thread and made the UI feel frozen.
+if st.session_state.get('auto_refresh', False):
+    components.html("""
+    <script>
+      setTimeout(function(){
+        try { window.parent.location.reload(); } catch(e) {}
+      }, 60000);
+    </script>
+    """, height=0, width=0)
 
-
-# --- AUTO-REFRESH LOGIC ---
-if st.session_state.auto_refresh:
-    time.sleep(60)
-    try:
-        st.experimental_rerun()
-    except Exception:
-        pass
+_scroll_to_active_section()
