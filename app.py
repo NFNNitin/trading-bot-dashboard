@@ -25,198 +25,83 @@ except ImportError:
     st.warning("⚠️ feedparser not installed. News feed will be limited. Install with: pip install feedparser")
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide")
+st.set_page_config(page_title="Pro AI Trader Ultimate", layout="wide", initial_sidebar_state="expanded")
+APP_BUILD = "FAST-UI-2026.08.20-v4"
 
 # Toggle rendering of Streamlit sidebar. Set to False for a clean top-toolbar-only UI.
-show_sidebar = False
+show_sidebar = True
 
 # Default toolbar visibility (can be toggled in the sidebar)
 if 'show_toolbar' not in st.session_state:
     st.session_state.show_toolbar = False
 
-# --- CUSTOM CSS FOR REAL-TIME FEEL ---
+# --- CUSTOM CSS / APP SHELL ---
 st.markdown("""
 <style>
-    .metric-card {background-color: #0e1117; border: 1px solid #303030; padding: 20px; border-radius: 10px; margin-bottom: 10px;}
-    .bullish {color: #00ff00; font-weight: bold;}
-    .bearish {color: #ff4b4b; font-weight: bold;}
-    .neutral {color: #fca311; font-weight: bold;}
-    .price-ticker {
-        background: linear-gradient(90deg, #1e1e1e 0%, #2d2d2d 100%);
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #00ff00;
-    }
-    .news-item {
-        background-color: #1a1a1a;
-        padding: 12px;
-        margin: 8px 0;
-        border-radius: 8px;
-        border-left: 3px solid #fca311;
-    }
-    .prediction-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 12px;
-        color: white;
-        margin: 15px 0;
-    }
-    .signal-strong-buy {
-        background-color: #00ff00;
-        color: black;
-        padding: 8px 15px;
-        border-radius: 5px;
-        font-weight: bold;
-    }
-    .signal-strong-sell {
-        background-color: #ff4b4b;
-        color: white;
-        padding: 8px 15px;
-        border-radius: 5px;
-        font-weight: bold;
-    }
-    .conflict-critical {
-        background-color: #ff4b4b;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #darkred;
-        margin: 10px 0;
-    }
-    .conflict-warning {
-        background-color: #fca311;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #ff8800;
-        margin: 10px 0;
-    }
-    .key-metric {
-        background-color: #000000; 
-        color: #ffffff; 
-        padding: 18px; 
-        border-radius: 10px; 
-        font-weight: 800; 
-        font-size: 20px;
-        border: 2px solid #ffffff;
-        text-align: center;
-    }
-    /* Streamlit toolbar visibility controlled via settings below */
-</style>
-
-<script>
-// Repeatedly enforce sidebar visibility and provide a persistent expand button
-function ensureSidebarVisible(){
-    try{
-        const sb = document.querySelector('[data-testid="stSidebar"]');
-        if(sb){
-            sb.style.display = 'block';
-            sb.style.visibility = 'visible';
-            sb.style.transform = 'none';
-            sb.style.width = '320px';
-            sb.style.minWidth = '260px';
-        }
-        // hide Streamlit's own collapsed control if present
-        const collapsed = document.querySelectorAll('[data-testid="collapsedControl"], button[aria-label="Toggle sidebar"], button[title="Toggle sidebar"]');
-        collapsed.forEach(e=>{ try{ e.style.display='none'; }catch(err){} });
-    }catch(e){ }
-}
-setInterval(ensureSidebarVisible, 400);
-document.addEventListener('DOMContentLoaded', ensureSidebarVisible);
-
-// Create a persistent left-edge expand button
-(function(){
-    try{
-        if(document.getElementById('persistent-expand-btn')) return;
-        const btn = document.createElement('button');
-        btn.id = 'persistent-expand-btn';
-        btn.innerText = '⯈';
-        Object.assign(btn.style, {
-            position: 'fixed',
-            left: '0',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 2147483647,
-            background: '#1f6feb',
-            color: 'white',
-            border: 'none',
-            padding: '8px 10px',
-            borderRadius: '0 6px 6px 0',
-            cursor: 'pointer'
-        });
-        btn.onclick = function(){ ensureSidebarVisible(); if(document.querySelector('[data-testid="stSidebar"]')) document.querySelector('[data-testid="stSidebar"]').focus(); };
-        document.body.appendChild(btn);
-    }catch(e){ }
-})();
-
-// Add a transparent left-edge blocker to intercept clicks on Streamlit's collapse arrow
-(function(){
-    try{
-        if(document.getElementById('sidebar-blocker')) return;
-        const blocker = document.createElement('div');
-        blocker.id = 'sidebar-blocker';
-        Object.assign(blocker.style, {
-            position: 'fixed',
-            left: '0',
-            top: '0',
-            height: '100vh',
-            width: '48px',
-            zIndex: 2147483647,
-            background: 'transparent',
-            pointerEvents: 'auto',
-            touchAction: 'none'
-        });
-        blocker.onclick = function(e){
-            e.stopPropagation();
-            e.preventDefault();
-            ensureSidebarVisible();
-            return false;
-        };
-        document.body.appendChild(blocker);
-    }catch(e){}
-})();
-</script>
-
-<style>
-/* Force the Streamlit sidebar to remain visible and disable the collapse toggle */
-div[data-testid="stSidebar"]{
-    display:block !important;
-    visibility:visible !important;
-    transform:none !important;
-    width:320px !important;
-    min-width:260px !important;
-    max-width:420px !important;
-}
-/* Hide built-in sidebar toggle buttons (different Streamlit versions use different attributes) */
-button[aria-label="Toggle sidebar"],
-button[aria-label="toggle sidebar"],
-button[title="Toggle sidebar"],
-button[aria-label="Collapse"],
-button[title="Collapse sidebar"],
-div[data-testid="collapsedControl"]{display:none !important}
-
-/* Streamlit toolbar visibility controlled via settings below */
+    .metric-card {background-color:#0e1117;border:1px solid #303030;padding:20px;border-radius:10px;margin-bottom:10px;}
+    .bullish {color:#00ff00;font-weight:bold;}
+    .bearish {color:#ff4b4b;font-weight:bold;}
+    .neutral {color:#fca311;font-weight:bold;}
+    .price-ticker {background:linear-gradient(90deg,#1e1e1e 0%,#2d2d2d 100%);padding:15px;border-radius:10px;margin:10px 0;border-left:4px solid #00ff00;}
+    .news-item {background-color:#1a1a1a;padding:12px;margin:8px 0;border-radius:8px;border-left:3px solid #fca311;}
+    .prediction-box {background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px;border-radius:12px;color:white;margin:15px 0;}
+    .signal-strong-buy {background-color:#00ff00;color:black;padding:8px 15px;border-radius:5px;font-weight:bold;}
+    .signal-strong-sell {background-color:#ff4b4b;color:white;padding:8px 15px;border-radius:5px;font-weight:bold;}
+    .conflict-critical {background-color:#ff4b4b;padding:15px;border-radius:8px;border-left:5px solid darkred;margin:10px 0;}
+    .conflict-warning {background-color:#fca311;padding:15px;border-radius:8px;border-left:5px solid #ff8800;margin:10px 0;}
+    .key-metric {background-color:#000;color:#fff;padding:18px;border-radius:10px;font-weight:800;font-size:20px;border:2px solid #fff;text-align:center;}
+    /* Keep Streamlit's native sidebar collapse/expand controls available. */
+    [data-testid="stSidebar"] {transition: transform .18s ease, width .18s ease;}
+    [data-testid="collapsedControl"] {display:flex !important;visibility:visible !important;}
 </style>
 """, unsafe_allow_html=True)
 
-# Always show the sidebar (remove hide/show controls)
-if 'sidebar_visible' not in st.session_state:
-    st.session_state.sidebar_visible = True
-# Hide Streamlit's collapsible sidebar (we render a static left column instead)
-st.markdown("<style>div[data-testid=\"stSidebar\"]{display:none !important;} </style>", unsafe_allow_html=True)
+# Persistent sidebar restore control. This is independent of Streamlit's native arrow,
+# so users can always reopen the sidebar even when a Streamlit version hides that arrow.
+components.html("""
+<script>
+(function(){
+  const doc = window.parent.document;
+  if (doc.getElementById('pro-ai-sidebar-toggle')) return;
+  const b = doc.createElement('button');
+  b.id = 'pro-ai-sidebar-toggle';
+  b.innerHTML = '☰';
+  b.title = 'Show / hide sidebar';
+  Object.assign(b.style,{position:'fixed',left:'10px',top:'72px',zIndex:'2147483000',
+    width:'38px',height:'38px',borderRadius:'10px',border:'1px solid #334155',
+    background:'#0f172a',color:'#f8fafc',fontSize:'20px',cursor:'pointer',boxShadow:'0 6px 20px rgba(0,0,0,.25)'});
+  b.onclick=function(){
+    const selectors=[
+      '[data-testid="collapsedControl"] button',
+      '[data-testid="stSidebarCollapseButton"] button',
+      'button[aria-label="Collapse sidebar"]',
+      'button[aria-label="Expand sidebar"]',
+      'button[aria-label="Toggle sidebar"]'
+    ];
+    for(const sel of selectors){ const el=doc.querySelector(sel); if(el){ el.click(); return; } }
+    const sb=doc.querySelector('[data-testid="stSidebar"]');
+    if(sb){
+      const hidden = getComputedStyle(sb).display==='none' || sb.getBoundingClientRect().width < 30;
+      if(hidden){ sb.style.display='block'; sb.style.visibility='visible'; sb.style.transform='none'; }
+      else { sb.style.display='none'; }
+    }
+  };
+  doc.body.appendChild(b);
+})();
+</script>
+""", height=0, width=0)
 
-# Toolbar visibility controlled by `show_toolbar` session state
+# Do not hide Streamlit's native toolbar/sidebar controls with custom JavaScript.
 if not st.session_state.get('show_toolbar', False):
     st.markdown("<style>[data-testid=\"stToolbar\"]{display:none !important;}</style>", unsafe_allow_html=True)
-else:
-    st.markdown("<style>[data-testid=\"stToolbar\"]{display:block !important;}</style>", unsafe_allow_html=True)
-
-# No fallback sidebar controls — sidebar is always visible
 
 # --- INITIALIZE SESSION STATE ---
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
 if 'auto_refresh' not in st.session_state:
-    st.session_state.auto_refresh = True
+    st.session_state.auto_refresh = False
+# v4 performance mode: background page reloads are intentionally disabled.
+st.session_state.auto_refresh = False
 if 'current_symbol' not in st.session_state:
     st.session_state.current_symbol = 'BTC-USD'
 if 'view_mode' not in st.session_state:
@@ -241,6 +126,11 @@ if 'sentiment_cache' not in st.session_state:
     st.session_state.sentiment_cache = {}
 if 'alert_threshold' not in st.session_state:
     st.session_state.alert_threshold = 90
+
+# Performance migration: prevent old sessions from continuing a full-page refresh loop.
+if st.session_state.get('_ui_perf_version') != '2026-08-20-v2':
+    st.session_state.auto_refresh = False
+    st.session_state['_ui_perf_version'] = '2026-08-20-v2'
 
 # Allow showing toolbar via URL param (?show_toolbar=1)
 try:
@@ -362,7 +252,20 @@ with st.sidebar.expander('Model & Backtest Settings', expanded=False):
         if 'tune_blend' not in st.session_state:
             st.session_state.tune_blend = False
 
+# --- SHARED MARKET-DATA CACHE ---
+@st.cache_data(ttl=45, show_spinner=False)
+def get_cached_history(symbol, period='1mo', interval='1d'):
+    """Shared Yahoo history cache used by sentiment and higher-timeframe filters."""
+    try:
+        df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=False, threads=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 # --- LIVE PRICE FEED FOR MULTIPLE ASSETS ---
+@st.cache_data(ttl=20, show_spinner=False)
 def get_live_prices():
     """Fetches real-time prices for major assets"""
     symbols = {
@@ -432,6 +335,7 @@ def get_live_prices():
     return prices
 
 # --- LIVE NEWS FEED ---
+@st.cache_data(ttl=120, show_spinner=False)
 def get_crypto_news():
     """Fetches latest crypto/finance news from RSS feeds"""
     if not FEEDPARSER_AVAILABLE:
@@ -707,8 +611,7 @@ def get_sentiment_score_legacy(symbol, news_items=None):
     # --- SIGNAL 2: Price Action Sentiment ---
     # Analyze recent price momentum as sentiment proxy
     try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period='1mo', interval='1d')
+        hist = get_cached_history(symbol, period='1mo', interval='1d')
         
         if not hist.empty and len(hist) >= 10:
             # 1-week performance
@@ -996,11 +899,8 @@ def get_sentiment_score(symbol, news_items=None):
     if 'BTC' in symbol or 'ETH' in symbol:
         # Crypto-specific sentiment factors
         try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
             # Volume trend (high volume = high interest)
-            hist = ticker.history(period='5d')
+            hist = get_cached_history(symbol, period='5d', interval='1d')
             if len(hist) > 1:
                 recent_volume = hist['Volume'].tail(2).mean()
                 avg_volume = hist['Volume'].mean()
@@ -1308,6 +1208,7 @@ def calculate_confluence_score(df, sentiment_data, order_flow, regime):
     }
 
 # --- 1. DATA ENGINE (Advanced Resampling) ---
+@st.cache_data(ttl=30, show_spinner=False)
 def get_data(symbol):
     """
     Fetches granular data and resamples it to generate 5m, 15m, 30m, 1h, and 4h datasets.
@@ -1636,9 +1537,9 @@ def generate_advanced_signal(df, timeframe_name):
         if symbol and timeframe_name in ('5m', '15m'):
             # Fetch higher timeframe EMAs
             try:
-                t = yf.Ticker(symbol)
-                df_1h = t.history(period='7d', interval='60m')
-                df_4h = t.history(period='30d', interval='240m')
+                df_1h = get_cached_history(symbol, period='7d', interval='1h')
+                _base_1h = get_cached_history(symbol, period='30d', interval='1h')
+                df_4h = (_base_1h.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna() if not _base_1h.empty else pd.DataFrame())
                 for _df in (df_1h, df_4h):
                     if _df is None or _df.empty:
                         raise Exception('empty')
@@ -4560,45 +4461,37 @@ if show_sidebar:
 
     # Asset selection based on view mode
     if view_mode == "Single Asset":
-        symbol = st.sidebar.text_input(
-            "Asset Symbol", 
-            value=st.session_state.get('current_symbol', ''),
-            key="single_symbol_input"
-        ).upper()
-        # Update session state
-        if symbol:
-            st.session_state.current_symbol = symbol
+        if st.session_state.get('_last_sidebar_symbol') != st.session_state.get('current_symbol'):
+            st.session_state['single_symbol_input'] = st.session_state.get('current_symbol', 'BTC-USD')
+            st.session_state['_last_sidebar_symbol'] = st.session_state.get('current_symbol')
+        st.sidebar.text_input(
+            "Asset Symbol",
+            key="single_symbol_input",
+            on_change=lambda: st.session_state.update(current_symbol=str(st.session_state.get('single_symbol_input','BTC-USD')).strip().upper())
+        )
     else:
         col1, col2 = st.sidebar.columns(2)
         with col1:
-            symbol_1 = st.sidebar.text_input(
-                "Asset 1", 
-                value=st.session_state.get('symbol_1',''),
-                key="symbol_1_input"
-            ).upper()
-            if symbol_1:
-                st.session_state.symbol_1 = symbol_1
+            if st.session_state.get('_last_sidebar_symbol_1') != st.session_state.get('symbol_1'):
+                st.session_state['symbol_1_input'] = st.session_state.get('symbol_1','BTC-USD')
+                st.session_state['_last_sidebar_symbol_1'] = st.session_state.get('symbol_1')
+            st.sidebar.text_input("Asset 1", key="symbol_1_input", on_change=lambda: st.session_state.update(symbol_1=str(st.session_state.get('symbol_1_input','BTC-USD')).strip().upper()))
         with col2:
-            symbol_2 = st.sidebar.text_input(
-                "Asset 2", 
-                value=st.session_state.get('symbol_2',''),
-                key="symbol_2_input"
-            ).upper()
-            if symbol_2:
-                st.session_state.symbol_2 = symbol_2
+            if st.session_state.get('_last_sidebar_symbol_2') != st.session_state.get('symbol_2'):
+                st.session_state['symbol_2_input'] = st.session_state.get('symbol_2','GC=F')
+                st.session_state['_last_sidebar_symbol_2'] = st.session_state.get('symbol_2')
+            st.sidebar.text_input("Asset 2", key="symbol_2_input", on_change=lambda: st.session_state.update(symbol_2=str(st.session_state.get('symbol_2_input','GC=F')).strip().upper()))
 
     st.sidebar.divider()
 
     # Manual Refresh Button
     if st.sidebar.button("🔄 REFRESH NOW", use_container_width=True):
         st.session_state.last_refresh = datetime.now()
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
+        _safe_rerun()
 
-    # Auto-refresh toggle
-    st.session_state.auto_refresh = st.sidebar.checkbox("Auto-Refresh (60s)", value=st.session_state.get('auto_refresh', False))
+    # Auto-refresh intentionally disabled: full-page timed reloads made the dashboard sluggish.
+    st.session_state.auto_refresh = False
+    st.sidebar.caption("Auto-refresh: OFF · use Refresh Now when you want fresh market data")
 
     st.sidebar.divider()
 
@@ -4783,14 +4676,20 @@ def _safe_rerun():
 
 
 def _sync_symbol_widgets(ticker):
-    """Update the canonical symbol without mutating already-rendered widgets."""
+    """Single source of truth for asset changes from every selector/button."""
     ticker = str(ticker).strip().upper()
     if not ticker:
         return
     if st.session_state.get('view_mode', 'Single Asset') == 'Single Asset':
         st.session_state.current_symbol = ticker
+        st.session_state['single_symbol_input'] = ticker
+        st.session_state['_last_sidebar_symbol'] = ticker
     else:
         st.session_state.symbol_1 = ticker
+        st.session_state['symbol_1_input'] = ticker
+        st.session_state['_last_sidebar_symbol_1'] = ticker
+    st.session_state['_symbol_sync_pending'] = ticker
+    st.session_state.last_refresh = datetime.now()
 
 
 def _on_nav_change():
@@ -4849,7 +4748,7 @@ if st.session_state.get('view_mode') == 'Multi Asset':
 
 st.markdown("<span id='page-top'></span>", unsafe_allow_html=True)
 st.title("📊 Pro AI Trader")
-st.caption("Multi-timeframe market intelligence, trade-quality scoring and risk-aware prediction dashboard")
+st.caption(f"Multi-timeframe market intelligence, trade-quality scoring and risk-aware prediction dashboard · Build **{APP_BUILD}**")
 
 # Professional sticky control bar. Native Streamlit widgets are used so every control is functional.
 st.markdown("""
@@ -4902,10 +4801,37 @@ def _asset_label_for_ticker(ticker):
 if st.session_state.get('top_asset_dropdown') not in ASSET_LABELS:
     st.session_state.top_asset_dropdown = _asset_label_for_ticker(st.session_state.get('current_symbol', 'BTC-USD'))
 
+# Synchronize selector widget state only before widgets are instantiated.
+_pending = st.session_state.pop('_symbol_sync_pending', None)
+_canonical_symbol = st.session_state.get('current_symbol','BTC-USD') if st.session_state.get('view_mode','Single Asset') == 'Single Asset' else st.session_state.get('symbol_1','BTC-USD')
+if _pending or st.session_state.get('_last_canonical_symbol') != _canonical_symbol:
+    if _canonical_symbol in quick_options:
+        st.session_state['toolbar_quick_asset'] = _canonical_symbol
+    st.session_state['top_asset_dropdown'] = _asset_label_for_ticker(_canonical_symbol)
+    st.session_state['toolbar_single'] = st.session_state.get('current_symbol','BTC-USD')
+    st.session_state['_last_canonical_symbol'] = _canonical_symbol
+
 with st.container(key='top_nav'):
     n1, n2, n3, n4, n5 = st.columns([2.5, 1.35, 2.1, 1.0, 0.75])
     with n1:
-        st.selectbox('Navigate', [label for label, _ in NAV_ITEMS], key='nav_destination', on_change=_on_nav_change)
+        nav_options_html = ''.join([f"<option value='{anchor}'>{label}</option>" for label, anchor in NAV_ITEMS])
+        components.html(f"""
+        <style>
+          html,body{{margin:0;background:transparent;font-family:Arial,sans-serif}}
+          label{{display:block;color:#94a3b8;font-size:12px;font-weight:600;margin:0 0 4px 2px}}
+          select{{width:100%;height:40px;border-radius:9px;border:1px solid #334155;background:#0f172a;color:#f8fafc;padding:0 10px;font-size:14px;outline:none}}
+        </style>
+        <label>Navigate</label>
+        <select id='fast-nav'><option value=''>Jump to section...</option>{nav_options_html}</select>
+        <script>
+          document.getElementById('fast-nav').addEventListener('change', function(){{
+            const id=this.value; if(!id) return;
+            const target=window.parent.document.getElementById(id === 'all' ? 'live-market' : id);
+            if(target) target.scrollIntoView({{behavior:'auto', block:'start'}});
+            this.selectedIndex=0;
+          }});
+        </script>
+        """, height=66)
     with n2:
         st.selectbox('Quick asset', quick_options, key='toolbar_quick_asset', on_change=_on_quick_asset_change)
     with n3:
@@ -4944,19 +4870,19 @@ if st.session_state.get('toolbar_panel','View & Assets') == 'View & Assets':
         view = st.radio('', ['Single Asset','Multi-Asset Comparison'], index=0 if st.session_state.get('view_mode','Single Asset')=='Single Asset' else 1, horizontal=True, key='toolbar_view')
         st.session_state.view_mode = view
     with r2:
-        single = st.text_input('Single Asset', value=st.session_state.get('current_symbol','BTC-USD'), key='toolbar_single')
-        if single:
-            st.session_state.current_symbol = single.upper()
+        st.text_input('Single Asset', key='toolbar_single', on_change=lambda: _sync_symbol_widgets(st.session_state.get('toolbar_single','BTC-USD')))
     with r3:
         c1, c2 = st.columns(2)
         with c1:
-            s1 = st.text_input('Asset 1', value=st.session_state.get('symbol_1','BTC-USD'), key='toolbar_symbol_1')
-            if s1:
-                st.session_state.symbol_1 = s1.upper()
+            if st.session_state.get('_last_toolbar_symbol_1') != st.session_state.get('symbol_1'):
+                st.session_state['toolbar_symbol_1'] = st.session_state.get('symbol_1','BTC-USD')
+                st.session_state['_last_toolbar_symbol_1'] = st.session_state.get('symbol_1')
+            st.text_input('Asset 1', key='toolbar_symbol_1', on_change=lambda: st.session_state.update(symbol_1=str(st.session_state.get('toolbar_symbol_1','BTC-USD')).strip().upper()))
         with c2:
-            s2 = st.text_input('Asset 2', value=st.session_state.get('symbol_2','GC=F'), key='toolbar_symbol_2')
-            if s2:
-                st.session_state.symbol_2 = s2.upper()
+            if st.session_state.get('_last_toolbar_symbol_2') != st.session_state.get('symbol_2'):
+                st.session_state['toolbar_symbol_2'] = st.session_state.get('symbol_2','GC=F')
+                st.session_state['_last_toolbar_symbol_2'] = st.session_state.get('symbol_2')
+            st.text_input('Asset 2', key='toolbar_symbol_2', on_change=lambda: st.session_state.update(symbol_2=str(st.session_state.get('toolbar_symbol_2','GC=F')).strip().upper()))
 
 elif st.session_state.get('toolbar_panel') == 'Appearance & Strict':
     a1, a2, a3 = st.columns([2,3,3])
@@ -5071,15 +4997,6 @@ else:
         else:
             st.error(f"Unable to fetch data for {st.session_state.symbol_2}")
 
-# --- NON-BLOCKING AUTO-REFRESH + NAVIGATION SCROLL ---
-# Avoid time.sleep() in Streamlit: it blocks the session thread and made the UI feel frozen.
-if st.session_state.get('auto_refresh', False):
-    components.html("""
-    <script>
-      setTimeout(function(){
-        try { window.parent.location.reload(); } catch(e) {}
-      }, 60000);
-    </script>
-    """, height=0, width=0)
-
-_scroll_to_active_section()
+# --- REFRESH POLICY ---
+# No timed location.reload() here. Navigation is client-side; market data refreshes only
+# when an asset changes or the user presses a Refresh button.
